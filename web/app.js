@@ -31,7 +31,7 @@
     halfInning: 2, halfSide: "bottom", autoAnchor: true, anchorSeconds: "", audio: true,
     types: ["Strikeout", "Home Run"], teams: [], role: "bat", batters: [], pitchers: [],
     innFrom: 1, innTo: 9, scoring: false, official: false, pre: 8, post: 12, outDir: "", outEdited: false,
-    overwrite: false, blur: false, blurMode: "blur", view: "multi", showCmds: false, lastJobId: null,
+    overwrite: false, blur: false, blurMode: "blur", view: "multi", showCmds: false, lastJobId: null, lastRunVideo: "", lastRunScope: "",
   };
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { saved = {}; }
@@ -304,7 +304,7 @@
       ? esc(t("Press “Generate commands” below. You can run right after; no need to read them.", "按下方的「產生指令」，產生後就能直接執行，不需要看懂指令。"))
       : R.stale
         ? esc(t("Your choices changed. Press “Generate commands” again before running.", "選擇已變更，請再按一次「產生指令」後再執行。"))
-        : `<b>${esc(t(`Ready: ${R.preview.length} steps.`, `已就緒：共 ${R.preview.length} 個步驟。`))}</b> ${esc(t("Just press Run below.", "直接按下方的「執行」即可。"))}`;
+        : `<b>${esc(t(`Ready: ${R.preview.length} steps.`, `已就緒：共 ${R.preview.length} 個步驟。`))}</b> ${esc(t(`${videoName(S.videoPath)} · ${scopeText()} · about ${clipsN(R.request.display.expected_clip_count)}.`, `${videoName(S.videoPath)} · ${scopeText()} · 預計 ${clipsN(R.request.display.expected_clip_count)}。`))} ${esc(t("Generating doesn't cut anything yet: press Run below to make the clips.", "產生指令還不會剪片，請按下方的「執行」開始產生片段。"))}`;
     setSeg("#viewSeg", S.view);
     $("#stale").hidden = !R.stale;
     $("#copyAll").disabled = !R.preview;
@@ -369,10 +369,22 @@
     $("#editor").hidden = !has;
     $("#editEmpty").hidden = has;
     $("#exportFromEdit").hidden = !has;
-    $("#editStale").hidden = !(has && R.stale);
+    // Warn when the clips shown aren't what the current settings would make.
+    const otherVideo = has && S.lastRunVideo && S.lastRunVideo !== S.videoPath;
+    const pending = has && (R.stale || R.phase === "ready" || otherVideo);
+    $("#editStale").hidden = !pending;
+    if (pending) {
+      const from = S.lastRunVideo ? videoName(S.lastRunVideo) + (S.lastRunScope ? ` · ${S.lastRunScope}` : "") : t("the previous run", "上一次執行");
+      $("#editStale").textContent = otherVideo
+        ? t(`These clips come from ${from}, but you've switched to ${videoName(S.videoPath)}. Press Run below to make clips from the new video (generate the commands first if needed), or export these clips first.`, `這些片段來自 ${from}，但你已經換成 ${videoName(S.videoPath)}。按下方「執行」產生新影片的片段（必要時先產生指令），也可以先輸出這些片段。`)
+        : R.phase === "ready"
+          ? t(`These clips come from the previous run (${from}). New commands are ready: press Run below to replace them, or export these clips first.`, `這些片段來自上一次執行（${from}）。新的指令已就緒：按下方「執行」就會換成新的片段，也可以先輸出這些片段。`)
+          : t(`These clips come from the previous run (${from}), and you've changed the settings since. Press “Generate commands” and run again to replace them, or export these clips first.`, `這些片段來自上一次執行（${from}），之後你改了設定。按「產生指令」再執行，就會換成新的片段；也可以先輸出這些片段。`);
+    }
     if (!has) return;
     R.sel = Math.min(R.sel, R.clips.length - 1);
     $("#clipCount").textContent = clipsN(R.clips.length);
+    $("#clipSource").textContent = S.lastRunVideo ? t(`from ${videoName(S.lastRunVideo)}`, `來自 ${videoName(S.lastRunVideo)}`) : "";
     $("#clipList").innerHTML = R.clips.map((c, i) => `<li class="clip-item${i === R.sel ? " sel" : ""}" draggable="true" data-i="${i}">
       <span class="grip" aria-hidden="true">⋮⋮</span>
       <span class="thumb"><span class="d">${(c.b - c.a).toFixed(1)}s</span></span>
@@ -699,6 +711,7 @@
       R.job = await api("POST", "/jobs", R.request);
       S.lastJobId = R.job.id; persist();
       R.phase = "running"; R.clips = []; $("#s-export").hidden = true;
+      S.lastRunVideo = S.videoPath; S.lastRunScope = scopeText(); persist();
       renderAll(); watch(R.job.id);
       document.getElementById("s-run").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (e) { showFormErrors(e.body); }
