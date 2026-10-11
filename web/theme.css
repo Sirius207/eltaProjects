@@ -25,6 +25,8 @@
   --spring: cubic-bezier(.34, 1.56, .64, 1);
 }
 * { box-sizing: border-box; }
+/* Classes below set display (flex/grid/inline-flex), which would otherwise beat the hidden attribute. */
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; }
 button, input, select, textarea { font: inherit; color: inherit; }
