@@ -96,6 +96,7 @@ class ServerTest(unittest.TestCase):
         folder.mkdir(parents=True, exist_ok=True)
         try:
             (folder / "clip one.mp4").write_bytes(bytes(range(256)) * 16)  # 4096 bytes
+            (folder / "placeholder.mp4").write_text("version https://git-lfs.github.com/spec/v1\n")
             url = self.base + "/media/sport_hightlight/dataset/_test_media/clip%20one.mp4"
             with urllib.request.urlopen(url, timeout=10) as resp:
                 self.assertEqual(resp.status, 200)
@@ -106,16 +107,16 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(resp.status, 206)
                 self.assertEqual(resp.headers["Content-Range"], "bytes 100-199/4096")
                 self.assertEqual(resp.read(), (bytes(range(256)) * 16)[100:200])
+            for path, code in (("/media/sport_hightlight/dataset/nope/x.mp4", 404),
+                               ("/media/highlight_builder/server.py", 403),
+                               ("/media/sport_hightlight/csv_data/full_game_ground_truth.csv", 403),
+                               ("/media/sport_hightlight/dataset/_test_media/placeholder.mp4", 404)):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(self.base + path, timeout=10)
+                self.assertEqual(ctx.exception.code, code, path)
+                ctx.exception.close()
         finally:
             shutil.rmtree(folder)
-        for path, code in (("/media/sport_hightlight/dataset/nope/x.mp4", 404),
-                           ("/media/highlight_builder/server.py", 403),
-                           ("/media/sport_hightlight/csv_data/full_game_ground_truth.csv", 403),
-                           ("/media/video/test_clip.mp4", 404)):  # LFS placeholder
-            with self.assertRaises(urllib.error.HTTPError) as ctx:
-                urllib.request.urlopen(self.base + path, timeout=10)
-            self.assertEqual(ctx.exception.code, code, path)
-            ctx.exception.close()
 
     def test_unknown_job(self):
         status, body = self.call("GET", "/api/v1/jobs/job_NOPE")
