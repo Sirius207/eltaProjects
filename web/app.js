@@ -656,7 +656,8 @@
   }
   function changed() {
     // Any new choice after generating or running means the next step is generating again.
-    if (R.preview && R.phase !== "running") { R.stale = true; if (R.phase === "ready" || R.phase === "done") R.phase = "setup"; }
+    // Also after a reload that restored a finished run (no commands generated in this session yet).
+    if (R.phase !== "running" && (R.preview || R.phase === "done")) { R.stale = true; if (R.phase === "ready" || R.phase === "done") R.phase = "setup"; }
     persist(); renderPlays(); renderCommands(); renderRun(); renderEdit(); renderCta(); renderSteps();
   }
 
