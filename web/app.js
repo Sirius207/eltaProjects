@@ -70,11 +70,11 @@
 
   // ------------------------------------------------------------------ filters
   const battingSide = (half) => (half === "top" ? "away" : "home");
-  function matches() {
+  function matches(ignoreTypes = false) {
     if (!R.game) return [];
     return R.game.plays.filter((p) => {
       if (S.mode === "half" && (p.inning !== Number(S.halfInning) || p.half !== S.halfSide)) return false;
-      if (S.types.size && !S.types.has(p.event_type)) return false;
+      if (!ignoreTypes && S.types.size && !S.types.has(p.event_type)) return false;
       if (S.teams.size) {
         const side = S.role === "bat" ? battingSide(p.half) : (battingSide(p.half) === "away" ? "home" : "away");
         if (!S.teams.has(side)) return false;
@@ -87,6 +87,18 @@
       if (S.official && p.official_highlight === false) return false;
       return true;
     });
+  }
+
+  function otherFilters() {
+    const parts = [];
+    if (S.mode === "half") parts.push(t(`inning ${S.halfInning} ${S.halfSide}`, `第 ${S.halfInning} 局${S.halfSide === "top" ? "上" : "下"}`));
+    if (S.teams.size) parts.push([...S.teams].map(teamShort).join(" + ") + (S.role === "bat" ? t(" batting", " 打擊") : t(" pitching", " 投球")));
+    const people = [...S.batters, ...S.pitchers];
+    if (people.length) parts.push(people.length > 2 ? t(`${people.length} players`, `${people.length} 位球員`) : people.join(", "));
+    if (S.innFrom !== 1 || S.innTo !== 9) parts.push(t(`innings ${S.innFrom}–${S.innTo}`, `第 ${S.innFrom}–${S.innTo} 局`));
+    if (S.scoring) parts.push(t("scoring only", "只看得分"));
+    if (S.official) parts.push(t("official highlights only", "只看官方精華"));
+    return parts;
   }
 
   function summaryParts(n) {
@@ -186,13 +198,19 @@
   }
 
   // ------------------------------------------------------------------ render: plays
-  const tick = '<span class="tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#06080c" stroke-width="4" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span>';
+  const tick = '<span class="tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#06080c" stroke-width="4" aria-hidden="true"><path d="m5 12 5 5 9-10" pathLength="1"/></svg></span>';
   function renderPlays() {
     const g = R.game;
     if (g) {
+      // Chip numbers: plays of that type under every *other* filter (team, player, inning…).
+      const pool = matches(true), byType = {};
+      pool.forEach((p) => (byType[p.event_type] = (byType[p.event_type] || 0) + 1));
+      const filtered = otherFilters().length > 0;
       $("#typeChips").innerHTML = g.play_types.map(({ event_type: e, count }) => {
         const main = HB.lang === "zh" ? (ZH[e] || e) : e, sub = HB.lang === "zh" ? e : (ZH[e] || "");
-        return `<button type="button" class="chip" data-type="${esc(e)}" aria-pressed="${S.types.has(e)}">${tick}<span>${esc(main)}</span>${sub && sub !== main ? `<span class="sub">${esc(sub)}</span>` : ""}<span class="n">${count}</span></button>`;
+        const n = byType[e] || 0;
+        const tip = filtered ? t(`${n} with your other filters · ${count} in the whole game`, `套用其他篩選後 ${n} 個 · 整場共 ${count} 個`) : t(`${count} in this game`, `本場共 ${count} 個`);
+        return `<button type="button" class="chip${n === 0 ? " none" : ""}" data-type="${esc(e)}" aria-pressed="${S.types.has(e)}" title="${esc(tip)}">${tick}<span>${esc(main)}</span>${sub && sub !== main ? `<span class="sub">${esc(sub)}</span>` : ""}<span class="n">${n}${filtered && n !== count ? `<small>/${count}</small>` : ""}</span></button>`;
       }).join("");
       $("#teams").innerHTML = ["away", "home"].map((side) => `<button type="button" class="team" data-team="${side}" aria-pressed="${S.teams.has(side)}"><span class="side">${side === "away" ? t("Away · bats top", "客隊 · 上半局打擊") : t("Home · bats bottom", "主隊 · 下半局打擊")}</span><span class="tn">${esc(teamShort(side))}</span></button>`).join("");
       const q = $("#playerSearch").value.trim().toLowerCase();
@@ -233,7 +251,10 @@
     if (n !== lastCount) { el.textContent = n; el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); lastCount = n; }
     el.classList.toggle("zero", n === 0);
     const total = S.mode === "half" ? R.game.plays.filter((p) => p.inning === Number(S.halfInning) && p.half === S.halfSide).length : R.game.plate_appearances;
-    $("#countOf").textContent = n === 0 ? t("Nothing matches. Try removing a filter.", "沒有符合的事件，試著移除一個篩選條件。") : t(`of ${total} in ${S.mode === "half" ? "this half-inning" : "this game"}`, `${S.mode === "half" ? "本半局" : "本場"}共 ${total} 個`);
+    const others = otherFilters();
+    const typesText = S.types.size ? t(`${S.types.size} play types`, `${S.types.size} 種事件類型`) : t("all play types", "所有事件類型");
+    const base = n === 0 ? t("Nothing matches. Try removing a filter.", "沒有符合的事件，試著移除一個篩選條件。") : t(`of ${total} in ${S.mode === "half" ? "this half-inning" : "this game"}`, `${S.mode === "half" ? "本半局" : "本場"}共 ${total} 個`);
+    $("#countOf").textContent = base + " · " + typesText + (others.length ? t(` · also filtering: ${others.join(", ")}`, ` · 另外套用：${others.join("、")}`) : "");
   }
 
   // ------------------------------------------------------------------ render: commands
