@@ -15,6 +15,7 @@ class ServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         server.Handler.manager = server.JobManager(demo=True, demo_delay=0.05)
+        server.Handler.renders = server.RenderManager(server.now)
         cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         cls.httpd.daemon_threads = True
         cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"

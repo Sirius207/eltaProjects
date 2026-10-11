@@ -25,10 +25,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import REPO_ROOT
+from .editor import RenderManager, editor_cli, map_errors
 
 WEB_ROOT = REPO_ROOT / "web"
 # Folders whose videos the page may play (clips and source videos). Nothing else is served.
-MEDIA_DIRS = ("sport_hightlight/dataset", "video")
+MEDIA_DIRS = ("sport_hightlight/dataset", "video", "out")
 MEDIA_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
 API = "/api/v1"
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -203,6 +204,7 @@ GAME_CACHE_SECONDS = 600
 class Handler(BaseHTTPRequestHandler):
     server_version = "HighlightBuilder/1"
     manager: JobManager
+    renders: "RenderManager"
     game_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -363,6 +365,14 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 6 and parts[5] == "events" and path.startswith(f"{API}/jobs/"):
             job = self.job_or_404(parts[4])
             return job and self.stream(job)
+        if len(parts) in (5, 6) and path.startswith(f"{API}/renders/"):
+            render = self.renders.renders.get(parts[4])
+            if render is None:
+                return self.error(404, 10002, "Unknown render")
+            if len(parts) == 6 and parts[5] == "events":
+                return self.stream(render)
+            if len(parts) == 5:
+                return self.send_json(200, render.to_json())
         self.send_error(404)
 
     def do_POST(self) -> None:
@@ -384,6 +394,38 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"commands": res["commands"], "demo": self.manager.demo})
             _, job = self.manager.create(request)
             return self.send_json(200, job.to_json())
+        if path in (f"{API}/edit/clips", f"{API}/edit/validate", f"{API}/renders"):
+            body = self.read_body()
+            if body is None:
+                return self.error(413, 50035, "Request too large")
+            try:
+                data = json.loads(body or "null")
+            except ValueError:
+                return self.error(400, 50035, "Invalid Form Body", {"_errors": [{"code": 50035, "message": "Not valid JSON."}]})
+            if path.endswith("/edit/clips"):
+                manifests = data.get("manifests") if isinstance(data, dict) else None
+                if not isinstance(manifests, list) or not manifests or not all(isinstance(m, str) and m for m in manifests):
+                    return self.error(400, 50035, "Invalid Form Body", {"manifests": {"_errors": [{"code": 50035, "message": "Must be a list of manifest paths."}]}})
+                code, res = editor_cli(["list", "--manifest", *manifests])
+            elif not self.output_allowed(data):
+                return self.error(400, 50035, "Invalid Form Body", {"output": {"_errors": [{"code": 50036, "message": "The final video must be saved under out/ and end in .mp4."}]}})
+            elif path.endswith("/edit/validate"):
+                code, res = editor_cli(["validate", "-"], stdin=json.dumps(data))
+            else:
+                # Validate first so bad projects fail fast with field-level errors.
+                code, res = editor_cli(["validate", "-"], stdin=json.dumps(data))
+                if res.get("ok"):
+                    return self.send_json(200, self.renders.create(data).to_json())
+            if res.get("ok"):
+                return self.send_json(200, res)
+            status, err = map_errors(res)
+            return self.send_json(status, err)
+        if len(parts) == 6 and parts[5] == "cancel" and path.startswith(f"{API}/renders/"):
+            render = self.renders.renders.get(parts[4])
+            if render is None:
+                return self.error(404, 10002, "Unknown render")
+            self.renders.cancel(render)
+            return self.send_json(200, render.to_json())
         if len(parts) == 6 and parts[5] == "cancel" and path.startswith(f"{API}/jobs/"):
             job = self.job_or_404(parts[4])
             if job:
@@ -391,6 +433,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, job.to_json())
             return
         self.send_error(404)
+
+    @staticmethod
+    def output_allowed(project: Any) -> bool:
+        """Renders may only write under out/, so a project can never overwrite source videos or clips."""
+        from .job import is_project_path
+
+        output = project.get("output") if isinstance(project, dict) else None
+        if not is_project_path(output) or not output.lower().endswith(".mp4"):
+            return False
+        target = (REPO_ROOT / output).resolve()
+        return (REPO_ROOT / "out").resolve() in target.parents
 
     def stream(self, job: JobRecord) -> None:
         self.send_response(200)
@@ -445,6 +498,7 @@ def main(argv=None) -> int:
 
     mode = "demo" if args.demo else "real" if args.real else "auto"
     Handler.manager = JobManager(mode=mode, demo_delay=args.demo_delay)
+    Handler.renders = RenderManager(now)
     demo, reasons = Handler.manager.demo_status()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.daemon_threads = True
