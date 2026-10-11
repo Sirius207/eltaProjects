@@ -1,8 +1,11 @@
-# MLB Highlight Ground Truth
+# MLB Highlight Ground Truth and Flag Masking
 
-這個專案整合 MLB 的 `/feed/live` 與 `/content` API，將棒球轉播影片的逐球事件換算成影片時間，並標記 MLB 官方精華，產生 CSV ground truth。
+這個專案包含兩部分：
 
-`/feed/live` 提供逐球時間；`/content` 提供官方精華標題、長度與播放 URL。程式預設輸出所有事件，官方精華只作為標籤，不會過濾掉普通事件。這是 ground truth 產生器，不是影片分類模型。
+1. 整合 MLB 的 `/feed/live` 與 `/content` API，將棒球轉播影片的逐球事件換算成影片時間，並標記 MLB 官方精華，產生 CSV ground truth。
+2. 使用 Grounding DINO 偵測中國國旗、SAM 2 產生遮罩，再將影片中的目標模糊或像素化。
+
+`/feed/live` 提供逐球時間；`/content` 提供官方精華標題、長度與播放 URL。ground truth 程式預設輸出所有事件，官方精華只作為標籤，不會過濾掉普通事件；它不是影片分類模型。
 
 ## 專案結構
 
@@ -19,6 +22,8 @@ sport_hightlight/
 │       └── manifest.csv
 ├── make_clip.py
 └── mlb_highlight_groundtruth.py
+target_mask/
+└── mask_flags.py
 video/
 ├── eltaMax10_Reds_Brewers_0913.mp4              # 整場，連續錄影
 ├── eltaMax10_Reds_Brewers_0913_bottom2nd.mp4
@@ -47,6 +52,15 @@ python -m pip install requests opencv-python numpy
 ```bash
 ffmpeg -version
 ```
+
+影片遮罩另外需要 PyTorch、Transformers、Pillow、SAM 2，以及系統 `ffmpeg`。請先依照 [PyTorch 官方安裝指引](https://pytorch.org/get-started/locally/)安裝適用於目前平台的 `torch` 和 `torchvision`，再安裝其餘套件：
+
+```bash
+python -m pip install transformers pillow
+python -m pip install git+https://github.com/facebookresearch/sam2.git
+```
+
+程式會透過 Hugging Face 載入 Grounding DINO 與 SAM 2 預訓練模型，第一次執行時需要網路連線並下載模型權重。macOS 有可用的 MPS 時，`--device auto` 會使用 MPS，否則使用 CPU；也可用 `--device mps` 或 `--device cpu` 指定裝置。
 
 ## 產生單一半局 ground truth
 
@@ -211,6 +225,46 @@ ls sport_hightlight/dataset/full_game/hard_negative | wc -l
 - `--auto-anchor` 找不到可靠訊號時會停止，請改用手動 anchor。
 - 音訊校準找的是音量上升沿，可能對應播報、觀眾聲或撞擊聲，不保證就是球棒擊球瞬間；應搭配人工抽查與驗證集評估。
 - `game-pk` 必須對應到影片中的同一場比賽。
+
+## 影片國旗遮罩
+
+`target_mask/mask_flags.py` 是獨立於 ground truth 流程的影片處理工具。它預設以 Grounding DINO 搜尋國旗，並用紅色比例、黃色比例、框的長寬比與面積篩選候選框；SAM 2 再依候選框產生像素級遮罩。遮罩會短暫沿用前幾幀以減少閃爍，放大至原影片尺寸並膨脹後，套用模糊或像素化效果。預設 prompt 針對「旗桿上的中國國旗」及「衣物上的中國國旗徽章」。
+
+一般像素化輸出：
+
+```bash
+python target_mask/mask_flags.py \
+  video/input.mp4 \
+  video/masked.mp4 \
+  --mode pixelate
+```
+
+預設 `--mode blur` 會模糊遮罩區域。可先輸出短片並檢查偵測框：
+
+```bash
+python target_mask/mask_flags.py \
+  video/input.mp4 \
+  video/mask_debug.mp4 \
+  --mode debug \
+  --max-frames 300
+```
+
+`debug` 模式會在遮罩區域加上綠色效果，並以黃色框和分數標示偵測結果；`--max-frames 300` 限制處理前 300 幀，0（預設值）則處理整部影片。輸出影片使用 H.264 編碼，並在來源有音訊時複製音訊串流。請確認系統已安裝 `ffmpeg`。
+
+常用參數如下：
+
+| 參數 | 預設值 | 用途 |
+| --- | --- | --- |
+| `--mode` | `blur` | 遮罩效果：`blur`、`pixelate` 或 `debug` |
+| `--prompt` | 中國國旗旗幟與衣物徽章 | Grounding DINO 文字提示；依其慣例使用小寫句子並以句點結尾 |
+| `--device` | `auto` | 運算裝置：`auto`、`mps` 或 `cpu` |
+| `--box-thr`、`--text-thr` | `0.10`、`0.10` | 偵測框與文字分數門檻 |
+| `--det-width` | `960` | 偵測與分割使用的縮圖寬度 |
+| `--hold` | `3` | 在當前遮罩之外，合併最多 3 個先前影格的遮罩以減少閃爍 |
+| `--dilate` | `15` | 全尺寸遮罩膨脹像素數；設為 0 可停用 |
+| `--max-boxes` | `5` | 每幀最多處理的偵測框數 |
+
+偵測門檻也可用 `--min-aspect`、`--min-red-ratio`、`--min-yellow-ratio` 與 `--min-area-ratio` 調整。程式只會處理符合目前 prompt 與顏色/形狀條件的目標；不同旗幟、徽章、畫面色彩或轉播版型可能需要調整 prompt 和門檻，請先用 `debug` 模式抽查結果。這是逐幀偵測與分割，不保證每一幀都能正確追蹤目標。
 
 ## 下一步
 
