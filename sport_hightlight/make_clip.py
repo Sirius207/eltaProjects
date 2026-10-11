@@ -376,7 +376,7 @@ def make_clips(args: argparse.Namespace) -> int:
     def report(event: str, clip: Optional[Path] = None) -> None:
         nonlocal finished
         finished += 1
-        extra = {"clip": str(clip)} if clip is not None else {}
+        extra = {"clip": clip.as_posix()} if clip is not None else {}
         emit_progress(progress, event=event, index=finished, total=total, **extra)
 
     snap_speech = not getattr(args, "no_snap_speech", False)
@@ -438,11 +438,12 @@ def make_clips(args: argparse.Namespace) -> int:
         else:
             report("clip_done", clip_path)  # already cut earlier; kept as is
 
+        # manifest 會進版控，一律用 / 分隔，Windows 產生的檔案在 macOS／Linux 也能用
         manifest_rows.append({
-            "clip_path": str(clip_path),
+            "clip_path": clip_path.as_posix(),
             "label": label,
             "game_pk": row.get("game_pk", ""),
-            "source_video": str(args.video),
+            "source_video": args.video.as_posix(),
             "inning": row.get("inning", ""),
             "half": row.get("half", ""),
             "event_type": row.get("event_type", ""),
