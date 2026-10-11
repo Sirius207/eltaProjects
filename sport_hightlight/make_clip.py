@@ -3,13 +3,14 @@
 
 import argparse
 import csv
+import json
 import os
 import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 
 TIME_FIELDS: Tuple[str, ...] = (
@@ -100,6 +101,72 @@ def probe_duration(video_path: Path) -> float:
         raise RuntimeError(f"無法取得影片長度：{video_path}") from exc
 
 
+TEAM_SIDES = ("away", "home")
+
+
+def batting_side(half: str) -> str:
+    """Away team bats in the top half, home team in the bottom half."""
+    return "away" if half.strip().lower() == "top" else "home"
+
+
+def pitching_side(half: str) -> str:
+    return "home" if batting_side(half) == "away" else "away"
+
+
+def filter_rows(rows: List[Dict[str, str]], args: argparse.Namespace) -> List[Tuple[int, Dict[str, str]]]:
+    """Keep rows matching every given filter. Returns (original row number, row) pairs.
+
+    Row numbers stay those of the full CSV so clip names don't change when filters change.
+    """
+    event_types = set(getattr(args, "event_types", None) or [])
+    batting_team = set(getattr(args, "batting_team", None) or [])
+    pitching_team = set(getattr(args, "pitching_team", None) or [])
+    batters = set(getattr(args, "batters", None) or [])
+    pitchers = set(getattr(args, "pitchers", None) or [])
+    innings = getattr(args, "innings", None)
+    scoring_only = bool(getattr(args, "scoring_only", False))
+    official_only = bool(getattr(args, "official_only", False))
+
+    if rows and (batters or pitchers):
+        missing = [c for c, wanted in (("batter", batters), ("pitcher", pitchers)) if wanted and c not in rows[0]]
+        if missing:
+            raise ValueError(
+                f"ground truth 沒有 {', '.join(missing)} 欄位；請用新版 mlb_highlight_groundtruth.py 重新產生"
+            )
+
+    kept: List[Tuple[int, Dict[str, str]]] = []
+    for row_number, row in enumerate(rows, start=1):
+        half = row.get("half", "")
+        if event_types and row.get("event_type", "") not in event_types:
+            continue
+        if batting_team and batting_side(half) not in batting_team:
+            continue
+        if pitching_team and pitching_side(half) not in pitching_team:
+            continue
+        if batters and row.get("batter", "") not in batters:
+            continue
+        if pitchers and row.get("pitcher", "") not in pitchers:
+            continue
+        if innings:
+            try:
+                inning = int(row.get("inning", ""))
+            except ValueError:
+                continue
+            if not innings[0] <= inning <= innings[1]:
+                continue
+        if scoring_only and not parse_bool(row.get("is_scoring_play", "")):
+            continue
+        if official_only and not parse_bool(row.get("is_official_highlight", "")):
+            continue
+        kept.append((row_number, row))
+    return kept
+
+
+def emit_progress(enabled: bool, **event) -> None:
+    if enabled:
+        print(json.dumps(event, ensure_ascii=False), file=sys.stderr, flush=True)
+
+
 def safe_name(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
     return value.strip("._-") or "event"
@@ -149,18 +216,24 @@ def extract_clips(
     clips: Sequence[Tuple[Path, float, float]],
     video_args: Sequence[str],
     jobs: int,
+    on_done: Optional[Callable[[Path], None]] = None,
 ) -> None:
-    """平行擷取 (輸出路徑, 起點秒數, 長度秒數)；任一失敗即取消尚未開始的工作。"""
+    """平行擷取 (輸出路徑, 起點秒數, 長度秒數)；任一失敗即取消尚未開始的工作。
+
+    on_done 在主執行緒中、每完成一個短片就呼叫一次（完成順序不一定是輸入順序）。
+    """
     if not clips:
         return
     with ThreadPoolExecutor(max_workers=jobs) as executor:
-        futures = [
-            executor.submit(extract_clip, video_path, path, start, duration, video_args)
+        futures = {
+            executor.submit(extract_clip, video_path, path, start, duration, video_args): path
             for path, start, duration in clips
-        ]
+        }
         try:
             for future in as_completed(futures):
                 future.result()
+                if on_done is not None:
+                    on_done(futures[future])
         except BaseException:
             for future in futures:
                 future.cancel()
@@ -205,6 +278,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="veryfast",
         help="libx264 編碼速度，只對 --encoder libx264 有效；越快檔案越大（預設 veryfast）",
     )
+    filters = parser.add_argument_group("篩選（可組合，不同條件需同時符合）")
+    filters.add_argument("--event-types", nargs="+", metavar="TYPE", help="只保留這些 event_type，例如 Strikeout \"Home Run\"")
+    filters.add_argument("--batting-team", nargs="+", choices=TEAM_SIDES, help="打擊方：away（上半局）或 home（下半局）")
+    filters.add_argument("--pitching-team", nargs="+", choices=TEAM_SIDES, help="投球方：away 或 home")
+    filters.add_argument("--batters", nargs="+", metavar="NAME", help="只保留這些打者（需要 batter 欄位）")
+    filters.add_argument("--pitchers", nargs="+", metavar="NAME", help="只保留這些投手（需要 pitcher 欄位）")
+    filters.add_argument("--innings", nargs=2, type=int, metavar=("FROM", "TO"), help="局數範圍，例如 7 9")
+    filters.add_argument("--scoring-only", action="store_true", help="只保留得分事件")
+    filters.add_argument("--official-only", action="store_true", help="只保留 MLB 官方精華")
+    parser.add_argument(
+        "--progress-json",
+        action="store_true",
+        help="每完成一個事件就在 stderr 輸出一行 JSON 進度（供後端讀取）",
+    )
     return parser
 
 
@@ -217,6 +304,8 @@ def make_clips(args: argparse.Namespace) -> int:
         raise FileNotFoundError(f"找不到影片：{args.video}")
     if not args.ground_truth.is_file():
         raise FileNotFoundError(f"找不到 ground truth：{args.ground_truth}")
+    if getattr(args, "innings", None) and args.innings[0] > args.innings[1]:
+        raise ValueError("--innings 的 FROM 不可大於 TO")
 
     video_duration = probe_duration(args.video)
     output_dir = args.out_dir
@@ -226,13 +315,26 @@ def make_clips(args: argparse.Namespace) -> int:
     with args.ground_truth.open("r", encoding="utf-8-sig", newline="") as source:
         rows = list(csv.DictReader(source))
 
+    selected = filter_rows(rows, args)
+    progress = bool(getattr(args, "progress_json", False))
+    total = len(selected)
+    finished = 0  # clips done or skipped, in completion order
+    emit_progress(progress, event="clips_start", total=total)
+
+    def report(event: str, clip: Optional[Path] = None) -> None:
+        nonlocal finished
+        finished += 1
+        extra = {"clip": str(clip)} if clip is not None else {}
+        emit_progress(progress, event=event, index=finished, total=total, **extra)
+
     manifest_rows: List[Dict[str, str]] = []
     pending: List[Tuple[Path, float, float]] = []
     skipped = 0
-    for row_number, row in enumerate(rows, start=1):
+    for row_number, row in selected:
         event_seconds, time_source = parse_seconds(row)
         if event_seconds is None:
             skipped += 1
+            report("clip_skipped")
             continue
 
         requested_start = event_seconds - args.pre_seconds
@@ -242,6 +344,7 @@ def make_clips(args: argparse.Namespace) -> int:
         clip_duration = clip_end - clip_start
         if clip_duration <= 0:
             skipped += 1
+            report("clip_skipped")
             continue
 
         is_official = parse_bool(row.get("is_official_highlight", ""))
@@ -254,6 +357,8 @@ def make_clips(args: argparse.Namespace) -> int:
 
         if not clip_path.exists() or args.overwrite:
             pending.append((clip_path, clip_start, clip_duration))
+        else:
+            report("clip_done", clip_path)  # already cut earlier; kept as is
 
         manifest_rows.append({
             "clip_path": str(clip_path),
@@ -272,6 +377,8 @@ def make_clips(args: argparse.Namespace) -> int:
             "is_official_highlight": str(is_official),
             "official_highlight_title": row.get("official_highlight_title", ""),
             "official_highlight_url": row.get("official_highlight_url", ""),
+            "batter": row.get("batter", ""),
+            "pitcher": row.get("pitcher", ""),
         })
 
     video_args = video_codec_args(args.encoder, args.preset)
@@ -281,20 +388,22 @@ def make_clips(args: argparse.Namespace) -> int:
         if args.encoder == "libx264":
             settings += f"，--preset {args.preset}"
         print(f"擷取 {len(pending)} 個短片（{settings}）...")
-    extract_clips(args.video, pending, video_args, args.jobs)
+    extract_clips(args.video, pending, video_args, args.jobs, on_done=lambda path: report("clip_done", path))
     created = len(pending)
 
     manifest_fields = list(manifest_rows[0].keys()) if manifest_rows else [
         "clip_path", "label", "game_pk", "source_video", "inning", "half", "event_type",
         "description", "event_seconds", "event_time_source", "clip_start_seconds",
         "clip_end_seconds", "clip_duration_seconds", "is_official_highlight",
-        "official_highlight_title", "official_highlight_url",
+        "official_highlight_title", "official_highlight_url", "batter", "pitcher",
     ]
     with manifest_path.open("w", encoding="utf-8", newline="") as manifest_file:
         writer = csv.DictWriter(manifest_file, fieldnames=manifest_fields)
         writer.writeheader()
         writer.writerows(manifest_rows)
 
+    if len(selected) != len(rows):
+        print(f"篩選：{len(rows)} 筆事件中保留 {len(selected)} 筆。")
     print(f"完成：建立/保留 {len(manifest_rows)} 個事件短片，新增 {created} 個。")
     print(f"略過 {skipped} 筆沒有有效影片時間的事件。")
     print(f"manifest：{manifest_path}")

@@ -1,0 +1,1109 @@
+openapi: 3.1.0
+info:
+  title: Highlight Builder HTTP API
+  description: >-
+    Backend for the Highlight Builder page. The page sends one job per Run (US-7);
+    the backend runs the allowed tools in order, without a shell, and reports progress.
+    Layout and naming follow the Discord HTTP API specification.
+  license:
+    name: MIT
+    identifier: MIT
+  version: "1"
+externalDocs:
+  url: https://claude.ai/artifact/LunUjuwG8oqZZbKEFbJUEZ
+  description: Highlight Builder requirements (US-1 to US-8)
+servers:
+  - url: http://localhost:8787/api/v1
+    description: Local backend (current phase). Start it with python -m highlight_builder.server
+security:
+  - {}
+  - BearerToken: []
+paths:
+  /games/{game_pk}:
+    parameters:
+      - name: game_pk
+        in: path
+        schema:
+          $ref: "#/components/schemas/GamePkType"
+        required: true
+    get:
+      operationId: get_game
+      description: Teams, players and play-type counts for one game (US-3).
+      responses:
+        "200":
+          description: 200 response for get_game
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /environment:
+    get:
+      operationId: get_environment
+      description: What the backend machine has (ffmpeg, Python packages, real videos) and whether runs are in demo mode.
+      responses:
+        "200":
+          description: 200 response for get_environment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentResponse"
+  /videos:
+    get:
+      operationId: list_videos
+      description: Videos already in the project's video/ folder (US-1, localhost phase).
+      responses:
+        "200":
+          description: 200 response for list_videos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VideoResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /jobs:
+    get:
+      operationId: list_jobs
+      parameters:
+        - name: before
+          in: query
+          schema:
+            $ref: "#/components/schemas/JobIdType"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: 200 response for list_jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/JobResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+    post:
+      operationId: create_job
+      description: >-
+        Start a job. Sending a request_id that already exists returns that job
+        instead of starting a second one.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobCreateRequest"
+        required: true
+      responses:
+        "200":
+          description: 200 response for create_job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /jobs/preview:
+    post:
+      operationId: preview_job
+      description: >-
+        Validate a job and return the commands it would run (US-6) without starting it.
+        Built by the same code that runs the job.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobCreateRequest"
+        required: true
+      responses:
+        "200":
+          description: 200 response for preview_job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobPreviewResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /jobs/{job_id}:
+    parameters:
+      - name: job_id
+        in: path
+        schema:
+          $ref: "#/components/schemas/JobIdType"
+        required: true
+    get:
+      operationId: get_job
+      responses:
+        "200":
+          description: 200 response for get_job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /jobs/{job_id}/cancel:
+    parameters:
+      - name: job_id
+        in: path
+        schema:
+          $ref: "#/components/schemas/JobIdType"
+        required: true
+    post:
+      operationId: cancel_job
+      description: The Stop button (US-7). Clips that already finished are kept.
+      responses:
+        "200":
+          description: 200 response for cancel_job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /jobs/{job_id}/events:
+    parameters:
+      - name: job_id
+        in: path
+        schema:
+          $ref: "#/components/schemas/JobIdType"
+        required: true
+    get:
+      operationId: list_job_events
+      description: Server-sent events with live progress while the page is open.
+      responses:
+        "200":
+          description: 200 response for list_job_events
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/JobEventResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /edit/clips:
+    post:
+      operationId: list_edit_clips
+      description: Runs highlight_editor list. Gives each clip's real fps and frame count so trims convert exactly.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                manifests:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ProjectPathType"
+                  minItems: 1
+              required:
+                - manifests
+        required: true
+      responses:
+        "200":
+          description: 200 response for list_edit_clips
+          content:
+            application/json:
+              schema:
+                $ref: "../../highlight_editor/openapi.yaml#/components/schemas/ListClipsResult"
+        "4XX":
+          $ref: "#/components/responses/EditorErrorResponse"
+  /edit/validate:
+    post:
+      operationId: validate_edit_project
+      description: Runs highlight_editor validate. The output must be under out/ and end in .mp4.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "../../highlight_editor/openapi.yaml#/components/schemas/Project"
+        required: true
+      responses:
+        "200":
+          description: 200 response for validate_edit_project
+          content:
+            application/json:
+              schema:
+                $ref: "../../highlight_editor/openapi.yaml#/components/schemas/ValidateResult"
+        "4XX":
+          $ref: "#/components/responses/EditorErrorResponse"
+  /renders:
+    post:
+      operationId: create_render
+      description: Validates the project, then runs highlight_editor render in the background (US-8 export).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "../../highlight_editor/openapi.yaml#/components/schemas/Project"
+        required: true
+      responses:
+        "200":
+          description: 200 response for create_render
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/EditorErrorResponse"
+  /renders/{render_id}:
+    parameters:
+      - name: render_id
+        in: path
+        schema:
+          type: string
+          pattern: ^render_[0-9a-f]{20}$
+        required: true
+    get:
+      operationId: get_render
+      responses:
+        "200":
+          description: 200 response for get_render
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /renders/{render_id}/events:
+    parameters:
+      - name: render_id
+        in: path
+        schema:
+          type: string
+        required: true
+    get:
+      operationId: list_render_events
+      description: Server-sent events (JOB_UPDATE, then JOB_DONE) carrying RenderResponse.
+      responses:
+        "200":
+          description: 200 response for list_render_events
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /renders/{render_id}/cancel:
+    parameters:
+      - name: render_id
+        in: path
+        schema:
+          type: string
+        required: true
+    post:
+      operationId: cancel_render
+      description: Stops the render. highlight_editor removes its temporary files and writes no output.
+      responses:
+        "200":
+          description: 200 response for cancel_render
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+components:
+  schemas:
+    RenderResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatuses"
+        phase:
+          type: string
+          enum:
+            - queued
+            - segments
+            - concat
+            - done
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        output:
+          type: string
+        progress:
+          $ref: "#/components/schemas/ProgressResponse"
+        current_segment:
+          type:
+            - string
+            - "null"
+        result:
+          oneOf:
+            - type: "null"
+            - $ref: "../../highlight_editor/openapi.yaml#/components/schemas/RenderResult"
+        error:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/EditorErrorBody"
+      required:
+        - id
+        - status
+        - phase
+        - progress
+    EditorErrorBody:
+      type: object
+      description: >-
+        highlight_editor errors mapped to Highlight Builder codes (400 50035, 404 40401,
+        409 40901 output_exists, 500 50001/50002). editor_errors keeps the original list.
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        editor_errors:
+          type: array
+          items:
+            $ref: "../../highlight_editor/openapi.yaml#/components/schemas/Error"
+      required:
+        - code
+        - message
+    JobIdType:
+      type: string
+      pattern: ^job_[0-9A-HJKMNP-TV-Z]{26}$
+      format: ulid
+    GamePkType:
+      type: integer
+      minimum: 1
+    ProjectPathType:
+      type: string
+      description: Path relative to the project folder. Must not start with / or contain "..".
+      pattern: ^(?!/)(?!.*\.\.)[^\0]+$
+      maxLength: 512
+    TeamSides:
+      type: string
+      oneOf:
+        - title: AWAY
+          description: Visiting team; bats in the top half
+          const: away
+        - title: HOME
+          description: Home team; bats in the bottom half
+          const: home
+    InningHalves:
+      type: string
+      oneOf:
+        - title: TOP
+          const: top
+        - title: BOTTOM
+          const: bottom
+    JobStatuses:
+      type: string
+      oneOf:
+        - title: QUEUED
+          const: queued
+        - title: RUNNING
+          const: running
+        - title: SUCCEEDED
+          const: succeeded
+        - title: FAILED
+          const: failed
+        - title: CANCELLED
+          const: cancelled
+    StepStatuses:
+      type: string
+      oneOf:
+        - title: WAITING
+          const: waiting
+        - title: RUNNING
+          const: running
+        - title: SUCCEEDED
+          const: succeeded
+        - title: FAILED
+          const: failed
+        - title: SKIPPED
+          description: Not run because an earlier step failed
+          const: skipped
+        - title: CANCELLED
+          const: cancelled
+    JobErrorCodes:
+      type: integer
+      oneOf:
+        - title: VIDEO_NOT_FOUND
+          description: The video file does not exist at the given path
+          const: 40401
+        - title: GAME_NOT_FOUND
+          description: The MLB API has no game with this game_pk
+          const: 40402
+        - title: NO_PLAYS_MATCHED
+          description: The filters matched zero plays
+          const: 42201
+        - title: TOOL_FAILED
+          description: The tool exited with an error; see details
+          const: 50001
+        - title: FFMPEG_MISSING
+          description: ffmpeg or ffprobe is not installed on the backend machine
+          const: 50002
+    JobCreateRequest:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Made by the page. Repeating it returns the existing job.
+        display:
+          $ref: "#/components/schemas/JobDisplay"
+        steps:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/FindPlaysStep"
+              - $ref: "#/components/schemas/CutClipsStep"
+              - $ref: "#/components/schemas/BlurFlagsStep"
+            discriminator:
+              propertyName: tool
+              mapping:
+                mlb_highlight_groundtruth: "#/components/schemas/FindPlaysStep"
+                make_clip: "#/components/schemas/CutClipsStep"
+                mask_flags: "#/components/schemas/BlurFlagsStep"
+          minItems: 1
+          maxItems: 3
+        on_failure:
+          type: string
+          oneOf:
+            - title: STOP
+              description: Stop the job and skip later steps
+              const: stop
+        keep_finished_clips:
+          type: boolean
+      required:
+        - request_id
+        - steps
+      additionalProperties: false
+    JobDisplay:
+      type: object
+      description: Shown in the job list and progress view only. Never used to decide what runs.
+      properties:
+        summary:
+          type: string
+          maxLength: 300
+        expected_clip_count:
+          type:
+            - integer
+            - "null"
+          minimum: 0
+    StepBase:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{0,31}$
+        depends_on:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+      required:
+        - id
+        - tool
+        - args
+    FindPlaysStep:
+      allOf:
+        - $ref: "#/components/schemas/StepBase"
+        - type: object
+          properties:
+            tool:
+              const: mlb_highlight_groundtruth
+            args:
+              $ref: "#/components/schemas/FindPlaysArgs"
+    CutClipsStep:
+      allOf:
+        - $ref: "#/components/schemas/StepBase"
+        - type: object
+          properties:
+            tool:
+              const: make_clip
+            args:
+              $ref: "#/components/schemas/CutClipsArgs"
+    BlurFlagsStep:
+      allOf:
+        - $ref: "#/components/schemas/StepBase"
+        - type: object
+          properties:
+            tool:
+              const: mask_flags
+            for_each:
+              type: object
+              properties:
+                clips_from:
+                  type: string
+                output_suffix:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{1,32}$
+              required:
+                - clips_from
+            args:
+              $ref: "#/components/schemas/BlurFlagsArgs"
+    FindPlaysArgs:
+      type: object
+      description: Options of mlb_highlight_groundtruth.py, dashes replaced by underscores.
+      properties:
+        game_pk:
+          $ref: "#/components/schemas/GamePkType"
+        video:
+          $ref: "#/components/schemas/ProjectPathType"
+        game_offset_seconds:
+          type:
+            - number
+            - "null"
+          minimum: 0
+        clip_inning:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        clip_half:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/InningHalves"
+        anchor_video_seconds:
+          type:
+            - number
+            - "null"
+          minimum: 0
+        auto_anchor:
+          type:
+            - boolean
+            - "null"
+        audio_calibrate:
+          type:
+            - boolean
+            - "null"
+        audio_search_before:
+          type:
+            - number
+            - "null"
+          minimum: 0
+        audio_search_after:
+          type:
+            - number
+            - "null"
+          minimum: 0
+        out:
+          $ref: "#/components/schemas/ProjectPathType"
+      required:
+        - game_pk
+        - video
+        - out
+      additionalProperties: false
+    CutClipsArgs:
+      type: object
+      description: Options of make_clip.py, including its filter options.
+      properties:
+        ground_truth:
+          $ref: "#/components/schemas/ProjectPathType"
+        video:
+          $ref: "#/components/schemas/ProjectPathType"
+        out_dir:
+          $ref: "#/components/schemas/ProjectPathType"
+        pre_seconds:
+          type: number
+          minimum: 0
+          maximum: 60
+        post_seconds:
+          type: number
+          minimum: 0
+          maximum: 60
+        overwrite:
+          type:
+            - boolean
+            - "null"
+        event_types:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+          uniqueItems: true
+        batting_team:
+          type:
+            - array
+            - "null"
+          items:
+            $ref: "#/components/schemas/TeamSides"
+          uniqueItems: true
+        pitching_team:
+          type:
+            - array
+            - "null"
+          items:
+            $ref: "#/components/schemas/TeamSides"
+          uniqueItems: true
+        batters:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+          uniqueItems: true
+        pitchers:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+          uniqueItems: true
+        innings:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/InningRange"
+        scoring_only:
+          type:
+            - boolean
+            - "null"
+        official_only:
+          type:
+            - boolean
+            - "null"
+      required:
+        - ground_truth
+        - video
+        - out_dir
+      additionalProperties: false
+    BlurFlagsArgs:
+      type: object
+      description: Options of mask_flags.py. Input and output files come from for_each.
+      properties:
+        mode:
+          type: string
+          oneOf:
+            - title: BLUR
+              const: blur
+            - title: PIXELATE
+              const: pixelate
+        device:
+          type:
+            - string
+            - "null"
+          enum:
+            - auto
+            - mps
+            - cpu
+            - null
+      additionalProperties: false
+    InningRange:
+      type: object
+      properties:
+        from:
+          type: integer
+          minimum: 1
+        to:
+          type: integer
+          minimum: 1
+      required:
+        - from
+        - to
+    JobResponse:
+      type: object
+      properties:
+        id:
+          $ref: "#/components/schemas/JobIdType"
+        request_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/JobStatuses"
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        display:
+          $ref: "#/components/schemas/JobDisplay"
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobStepResponse"
+        error:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/JobErrorResponse"
+        outputs:
+          $ref: "#/components/schemas/JobOutputsResponse"
+        demo:
+          type: boolean
+          description: True when the backend walked through the steps without running the tools.
+      required:
+        - id
+        - request_id
+        - status
+        - created_at
+        - steps
+    JobStepResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/StepStatuses"
+        started_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        finished_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        progress:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ProgressResponse"
+      required:
+        - id
+        - status
+    ProgressResponse:
+      type: object
+      properties:
+        done:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+      required:
+        - done
+        - total
+    JobErrorResponse:
+      type: object
+      description: Why a job failed. message is shown to the user as is.
+      properties:
+        code:
+          $ref: "#/components/schemas/JobErrorCodes"
+        message:
+          type: string
+        step_id:
+          type: string
+        details:
+          type:
+            - string
+            - "null"
+          description: Last lines of the tool's error output, behind "Show details".
+        finished_clips:
+          type: integer
+          minimum: 0
+      required:
+        - code
+        - message
+        - step_id
+    JobOutputsResponse:
+      type: object
+      properties:
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClipResponse"
+        manifest:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ProjectPathType"
+    ClipResponse:
+      type: object
+      properties:
+        path:
+          $ref: "#/components/schemas/ProjectPathType"
+        event_type:
+          type: string
+        inning:
+          type: integer
+        half:
+          $ref: "#/components/schemas/InningHalves"
+        batter:
+          type:
+            - string
+            - "null"
+        duration_seconds:
+          type: number
+        official_highlight:
+          type: boolean
+        masked_path:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ProjectPathType"
+        description:
+          type: string
+        official_highlight_title:
+          type: string
+      required:
+        - path
+        - event_type
+        - inning
+        - half
+        - duration_seconds
+        - official_highlight
+    JobEventResponse:
+      type: object
+      description: One server-sent event. The data field holds the latest job state.
+      properties:
+        event:
+          type: string
+          oneOf:
+            - title: JOB_UPDATE
+              const: JOB_UPDATE
+            - title: JOB_DONE
+              description: Last event; the stream closes after it
+              const: JOB_DONE
+        data:
+          $ref: "#/components/schemas/JobResponse"
+      required:
+        - event
+        - data
+    VideoResponse:
+      type: object
+      properties:
+        path:
+          $ref: "#/components/schemas/ProjectPathType"
+        size_bytes:
+          type: integer
+          format: int64
+        duration_seconds:
+          type:
+            - number
+            - "null"
+        width:
+          type:
+            - integer
+            - "null"
+        height:
+          type:
+            - integer
+            - "null"
+      required:
+        - path
+        - size_bytes
+    GameResponse:
+      type: object
+      properties:
+        game_pk:
+          $ref: "#/components/schemas/GamePkType"
+        date:
+          type: string
+          format: date
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamResponse"
+          minItems: 2
+          maxItems: 2
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlayerResponse"
+        play_types:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlayTypeCountResponse"
+        plate_appearances:
+          type: integer
+        plays:
+          type: array
+          description: Every plate appearance, so the page can count matches for any filter.
+          items:
+            $ref: "#/components/schemas/PlayResponse"
+        source:
+          type: string
+          enum:
+            - mlb_api
+            - local_csv
+      required:
+        - game_pk
+        - teams
+        - players
+        - play_types
+    PlayResponse:
+      type: object
+      properties:
+        inning:
+          type: integer
+        half:
+          $ref: "#/components/schemas/InningHalves"
+        event_type:
+          type: string
+        batter:
+          type: string
+        pitcher:
+          type: string
+        is_scoring_play:
+          type: boolean
+        official_highlight:
+          type:
+            - boolean
+            - "null"
+          description: Null when no saved play list says which plays MLB published.
+      required:
+        - inning
+        - half
+        - event_type
+    JobPreviewResponse:
+      type: object
+      properties:
+        commands:
+          type: array
+          items:
+            type: object
+            properties:
+              step_id:
+                type: string
+              tool:
+                type: string
+              argv:
+                type: array
+                items:
+                  type: string
+              shell:
+                type: string
+                description: argv quoted for a POSIX shell, for copying.
+              note:
+                type:
+                  - string
+                  - "null"
+            required:
+              - step_id
+              - tool
+              - argv
+              - shell
+        demo:
+          type: boolean
+      required:
+        - commands
+    EnvironmentResponse:
+      type: object
+      properties:
+        ffmpeg:
+          type: boolean
+        tools_python:
+          type: string
+        python_packages:
+          type: object
+          additionalProperties:
+            type: boolean
+        real_videos:
+          type: array
+          items:
+            type: string
+        lfs_placeholders:
+          type: array
+          items:
+            type: string
+        demo:
+          type: boolean
+      required:
+        - ffmpeg
+        - demo
+    TeamResponse:
+      type: object
+      properties:
+        side:
+          $ref: "#/components/schemas/TeamSides"
+        name:
+          type: string
+        abbreviation:
+          type: string
+      required:
+        - side
+        - name
+    PlayerResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        full_name:
+          type: string
+        side:
+          $ref: "#/components/schemas/TeamSides"
+        roles:
+          type: array
+          items:
+            type: string
+            enum:
+              - batter
+              - pitcher
+          uniqueItems: true
+      required:
+        - id
+        - full_name
+        - side
+        - roles
+    PlayTypeCountResponse:
+      type: object
+      properties:
+        event_type:
+          type: string
+        count:
+          type: integer
+          minimum: 1
+      required:
+        - event_type
+        - count
+    Error:
+      type: object
+      description: A single error, either for an API response or a specific field.
+      properties:
+        code:
+          type: integer
+          description: Highlight Builder error code. See the error code table.
+        message:
+          type: string
+          description: Human-readable error message
+      required:
+        - code
+        - message
+    ErrorDetails:
+      oneOf:
+        - type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ErrorDetails"
+        - $ref: "#/components/schemas/InnerErrors"
+    InnerErrors:
+      type: object
+      properties:
+        _errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/Error"
+      required:
+        - _errors
+    ErrorResponse:
+      type: object
+      description: Errors object returned by the Highlight Builder API
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            errors:
+              $ref: "#/components/schemas/ErrorDetails"
+  securitySchemes:
+    BearerToken:
+      type: http
+      scheme: bearer
+      description: Not used on localhost. Required in the later server phase.
+  responses:
+    EditorErrorResponse:
+      description: highlight_editor rejected the request (or the output isn't under out/)
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/EditorErrorBody"
+              - $ref: "#/components/schemas/ErrorResponse"
+    ClientErrorResponse:
+      description: Client error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

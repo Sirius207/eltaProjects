@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Highlight Builder</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 3 21 12 12 21 3 12Z' fill='none' stroke='%23ff7a1a' stroke-width='2.4'/><circle cx='12' cy='12' r='2.6' fill='%23cfe3ff'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700;900&display=swap">
+<link rel="stylesheet" href="/static/theme.css?v=202610111511">
+<link rel="stylesheet" href="/static/app.css?v=202610111511">
+<script src="/static/i18n.js?v=202610111511"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Highlight Builder home">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 21 12 12 21 3 12Z" stroke="#ff7a1a" stroke-width="2.2"/><circle cx="12" cy="12" r="2.6" fill="#cfe3ff"/></svg>
+    <span>Highlight Builder</span>
+  </a>
+  <nav class="steps" id="steps" aria-label="Steps" data-zh-aria-label="步驟">
+    <a href="#s-setup" data-step="setup"><b>1</b><span data-zh="影片與比賽">Video &amp; game</span></a>
+    <a href="#s-plays" data-step="plays"><b>2</b><span data-zh="事件">Plays</span></a>
+    <a href="#s-cmds" data-step="cmds"><b>3</b><span data-zh="指令">Commands</span></a>
+    <a href="#s-run" data-step="run"><b>4</b><span data-zh="執行">Run</span></a>
+    <a href="#s-edit" data-step="edit"><b>5</b><span data-zh="剪輯">Edit</span></a>
+  </nav>
+  <div class="top-actions">
+    <span class="mode-pill" id="modePill" hidden></span>
+    <div class="lang-switch" role="group" aria-label="Language 語言">
+      <button type="button" data-set-lang="zh" aria-pressed="false">中文</button>
+      <button type="button" data-set-lang="en" aria-pressed="true">EN</button>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+
+  <div class="demo-banner" id="demoBanner" hidden>
+    <strong data-zh="示範模式">Demo mode</strong>
+    <span id="demoReasons"></span>
+    <span data-zh="執行時會走過相同的步驟，但不會剪任何影片。">Runs walk through the same steps but cut no video.</span>
+  </div>
+
+  <section class="intro">
+    <span class="badge"><b data-zh="本機">Local</b> · <span data-zh="在你的電腦上執行，不會上傳任何檔案">Runs on this computer. Nothing is uploaded.</span></span>
+    <h1 data-zh="挑選事件，產生精華片段。">Pick the plays.<br>Get the clips.</h1>
+    <p data-zh="選擇影片與比賽、篩選事件，檢查指令後執行，再微調完成的片段。">Choose a video and game, filter the plays, check the commands, run them, then fine-tune the clips.</p>
+  </section>
+
+  <!-- ===== Step 1: video + game ===== -->
+  <section class="block" id="s-setup">
+    <div class="block-head"><span class="step-no" data-zh="步驟 1">Step 1</span><h2 data-zh="影片與比賽">Video and game</h2></div>
+    <div class="bento setup">
+      <div class="card c-video">
+        <div class="card-head"><h3 data-zh="影片">Video</h3><span class="hint" id="videoHint"></span></div>
+        <div class="video-list" id="videoList" role="radiogroup" aria-label="Videos in the project" data-zh-aria-label="專案中的影片"></div>
+        <label class="field">
+          <span class="label" data-zh="指令使用的影片路徑">Video path used by the commands</span>
+          <input class="input mono" id="videoPath" spellcheck="false">
+        </label>
+        <label class="file-pick">
+          <input type="file" id="videoFile" accept="video/*">
+          <span data-zh="或選擇檔案（會使用 <code>video/</code> 加上檔名）">Or choose a file (uses <code>video/</code> plus its name)</span>
+        </label>
+      </div>
+
+      <div class="card c-game">
+        <div class="card-head"><h3 data-zh="比賽">Game</h3></div>
+        <label class="field">
+          <span class="label" data-zh="MLB 比賽編號">MLB game number</span>
+          <div class="row">
+            <input class="input mono" id="gamePk" inputmode="numeric" autocomplete="off">
+            <button class="btn ghost" type="button" id="loadGame" data-zh="載入">Load</button>
+          </div>
+        </label>
+        <div class="game-status" id="gameStatus" aria-live="polite"></div>
+        <div class="field">
+          <span class="label" data-zh="影片涵蓋範圍">What the video covers</span>
+          <div class="seg" id="modeSeg" role="group" aria-label="Video covers" data-zh-aria-label="影片涵蓋範圍">
+            <button type="button" data-v="full" data-zh="整場比賽">Full game</button>
+            <button type="button" data-v="half" data-zh="單一半局">One half-inning</button>
+          </div>
+        </div>
+        <div class="field" id="fullFields">
+          <span class="label" data-zh="第一位打者在影片中的秒數">First batter starts at (seconds into the video)</span>
+          <input class="input mono" id="offset" inputmode="decimal">
+        </div>
+        <div class="field" id="halfFields" hidden>
+          <div class="row">
+            <label class="mini-field"><span class="label" data-zh="局">Inning</span><select class="input" id="halfInning"></select></label>
+            <label class="mini-field"><span class="label" data-zh="上 / 下">Top / bottom</span>
+              <select class="input" id="halfSide"><option value="top" data-zh="上半局">Top</option><option value="bottom" data-zh="下半局">Bottom</option></select></label>
+          </div>
+          <label class="check"><input type="checkbox" id="autoAnchor"> <span data-zh="自動找出開始時間">Find the start automatically</span></label>
+          <input class="input mono" id="anchorSeconds" inputmode="decimal" placeholder="Start second" data-zh-placeholder="開始秒數">
+        </div>
+        <label class="check"><input type="checkbox" id="audio"> <span data-zh="用現場聲音微調時間">Fine-tune timing with crowd sound</span></label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Step 2: plays ===== -->
+  <section class="block" id="s-plays">
+    <div class="block-head"><span class="step-no" data-zh="步驟 2">Step 2</span><h2 data-zh="挑選事件">Pick the plays</h2><span class="hint" data-zh="同一格內是「任一符合」，不同格之間要同時符合。">Choices in one card mean “any of these”. Cards combine.</span><button class="btn link" type="button" id="clearAll" data-zh="清除所有選擇">Clear all choices</button></div>
+    <div class="bento plays">
+      <div class="card c-types">
+        <div class="card-head"><h3 data-zh="事件類型">Play type</h3><button class="btn link" type="button" data-clear="types" data-zh="清除">Clear</button></div>
+        <div class="shortcuts">
+          <button class="shortcut" type="button" data-group="k" data-zh="所有三振">All strikeouts</button>
+          <button class="shortcut" type="button" data-group="hits" data-zh="所有安打">All hits</button>
+          <button class="shortcut" type="button" data-group="outs" data-zh="所有出局">All outs</button>
+          <button class="shortcut" type="button" data-group="walk" data-zh="保送">Walks</button>
+        </div>
+        <div class="chips" id="typeChips"><p class="empty" data-zh="載入比賽後會出現這場比賽的事件類型。">Load a game to see its play types.</p></div>
+      </div>
+
+      <div class="card c-count" aria-live="polite">
+        <span class="label" data-zh="符合的事件">Plays match</span>
+        <span class="big" id="count">–</span>
+        <span class="muted" id="countOf"></span>
+      </div>
+
+      <div class="card c-teams">
+        <div class="card-head"><h3 data-zh="隊伍">Team</h3><button class="btn link" type="button" data-clear="teams" data-zh="清除">Clear</button></div>
+        <div class="teams" id="teams"></div>
+        <div class="row role-row">
+          <span class="muted" data-zh="隊伍角色">Team is</span>
+          <div class="seg" id="roleSeg" role="group" aria-label="Team role" data-zh-aria-label="隊伍角色">
+            <button type="button" data-v="bat" data-zh="打擊">Batting</button>
+            <button type="button" data-v="pitch" data-zh="投球">Pitching</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card c-players">
+        <div class="card-head"><h3 data-zh="球員">Player</h3><button class="btn link" type="button" data-clear="players" data-zh="清除">Clear</button></div>
+        <input class="input" id="playerSearch" placeholder="Search batters and pitchers" data-zh-placeholder="搜尋打者與投手" aria-label="Search players" data-zh-aria-label="搜尋球員">
+        <div class="picked" id="picked"></div>
+        <div class="player-list" id="playerList"></div>
+      </div>
+
+      <div class="card c-more">
+        <h3 data-zh="局數與其他">Innings and more</h3>
+        <div class="row">
+          <label class="mini-field"><span class="label" data-zh="從">From</span><select class="input" id="innFrom"></select></label>
+          <label class="mini-field"><span class="label" data-zh="到">To</span><select class="input" id="innTo"></select></label>
+        </div>
+        <label class="switch"><input type="checkbox" id="scoringOnly"><span class="track"></span><span data-zh="只看得分事件">Scoring plays only</span></label>
+        <label class="switch"><input type="checkbox" id="officialOnly"><span class="track"></span><span data-zh="只看 MLB 官方精華">Official MLB highlights only</span></label>
+      </div>
+
+      <div class="card c-clip">
+        <h3 data-zh="片段設定">Clip settings</h3>
+        <div class="row steppers">
+          <div class="mini-field"><span class="label" data-zh="事件前">Before</span>
+            <div class="stepper"><button type="button" data-step="pre" data-d="-1" aria-label="Fewer seconds before" data-zh-aria-label="減少事件前秒數">−</button><output id="pre"></output><button type="button" data-step="pre" data-d="1" aria-label="More seconds before" data-zh-aria-label="增加事件前秒數">+</button></div></div>
+          <div class="mini-field"><span class="label" data-zh="事件後">After</span>
+            <div class="stepper"><button type="button" data-step="post" data-d="-1" aria-label="Fewer seconds after" data-zh-aria-label="減少事件後秒數">−</button><output id="post"></output><button type="button" data-step="post" data-d="1" aria-label="More seconds after" data-zh-aria-label="增加事件後秒數">+</button></div></div>
+          <div class="mini-field total"><span class="label" data-zh="每段">Each clip</span><b id="total"></b></div>
+        </div>
+        <label class="field"><span class="label" data-zh="輸出資料夾">Output folder</span><input class="input mono" id="outDir" spellcheck="false"></label>
+        <label class="switch"><input type="checkbox" id="overwrite"><span class="track"></span><span data-zh="覆寫已存在的片段">Replace clips that already exist</span></label>
+        <label class="switch"><input type="checkbox" id="blur"><span class="track"></span><span data-zh="模糊旗幟（每段片段）">Blur flags (in each clip)</span></label>
+        <div class="seg" id="blurSeg" role="group" aria-label="Blur style" data-zh-aria-label="模糊方式" hidden>
+          <button type="button" data-v="blur" data-zh="模糊">Blur</button>
+          <button type="button" data-v="pixelate" data-zh="馬賽克">Pixelate</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Step 3: commands ===== -->
+  <section class="block" id="s-cmds">
+    <div class="block-head">
+      <span class="step-no" data-zh="步驟 3">Step 3</span><h2 data-zh="檢查指令">Review the commands</h2>
+      <button class="btn link disclosure" type="button" id="cmdsToggle" aria-expanded="false" aria-controls="cmdsBody">
+        <span id="cmdsToggleLabel"></span>
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+    </div>
+    <div class="card cmds-collapsed" id="cmdsCollapsed">
+      <span class="status-dot" id="cmdsDot"></span>
+      <span id="cmdsCollapsedText"></span>
+    </div>
+    <div class="form-errors card" id="formErrors" hidden></div>
+    <div class="card term" id="cmdsBody" hidden>
+      <p class="term-hint" data-zh="給進階使用者：這些就是按下執行後，後端會依序跑的指令。不需要看懂也能直接執行。">For advanced users: these are the exact commands the backend runs, in order, when you press Run. You don't need to read them to run.</p>
+      <div class="term-bar">
+        <span class="term-sum" id="termSum"></span>
+        <div class="row">
+          <div class="seg small" id="viewSeg" role="group" aria-label="Command view" data-zh-aria-label="指令檢視">
+            <button type="button" data-v="multi" data-zh="多行">Multi-line</button>
+            <button type="button" data-v="one" data-zh="單行">One line</button>
+            <button type="button" data-v="json" data-zh="執行請求">Run request</button>
+          </div>
+          <button class="btn ghost small" type="button" id="copyAll" disabled data-zh="全部複製">Copy all</button>
+        </div>
+      </div>
+      <div class="stale" id="stale" hidden data-zh="選擇已變更，請重新產生以更新指令。">Your choices changed. Generate again to update these commands.</div>
+      <div class="cmds" id="cmds"></div>
+    </div>
+  </section>
+
+  <!-- ===== Step 4: run ===== -->
+  <section class="block" id="s-run">
+    <div class="block-head"><span class="step-no" data-zh="步驟 4">Step 4</span><h2 data-zh="執行並產生片段">Run and make the clips</h2><span class="hint" id="runHint"></span></div>
+    <div class="card run">
+      <div class="run-top">
+        <div class="run-prog"><div class="run-label" id="runLabel"></div><div class="bar"><span id="runBar"></span></div></div>
+        <button class="btn ghost" type="button" id="stopBtn" hidden data-zh="停止">Stop</button>
+      </div>
+      <ol class="run-steps" id="runSteps"></ol>
+      <div class="run-error" id="runError" hidden>
+        <strong id="runErrorTitle"></strong>
+        <span id="runErrorMsg"></span>
+        <div class="row"><button class="btn ghost small" type="button" id="retryBtn" data-zh="重試">Try again</button><button class="btn link" type="button" id="detailsBtn" data-zh="顯示詳細資訊">Show details</button></div>
+        <pre class="details" id="runErrorDetails" hidden></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Step 5: edit (demo flow for now) ===== -->
+  <section class="block" id="s-edit">
+    <div class="block-head"><span class="step-no" data-zh="步驟 5">Step 5</span><h2 data-zh="微調片段">Fine-tune the clips</h2><button class="btn ghost small" type="button" id="exportFromEdit" hidden data-zh="輸出這些片段">Export these clips</button></div>
+    <div class="edit-stale" id="editStale" hidden data-zh="這些片段來自上一次執行，之後你改了篩選條件。按下方「產生指令」再執行，就會換成新的片段；也可以先輸出這些片段。">These clips come from the previous run, and you've changed the filters since. Press “Generate commands” below and run again to replace them, or export these clips first.</div>
+    <p class="empty" id="editEmpty" data-zh="執行完成後，片段會出現在這裡。">Clips appear here when a run finishes.</p>
+    <div class="bento edit" id="editor" hidden>
+      <div class="card c-list">
+        <div class="card-head"><h3 id="clipCount"></h3><span class="muted" data-zh="依清單順序合併成最終影片">Joined in this order</span></div>
+        <ol class="clip-list" id="clipList"></ol>
+      </div>
+      <div class="card c-viewer">
+        <div class="viewer-frame">
+          <video id="player" playsinline preload="metadata" controls></video>
+          <div class="player-msg" id="playerMsg" hidden>
+            <strong id="playerMsgTitle"></strong>
+            <span id="playerMsgText"></span>
+          </div>
+          <span class="viewer-tc" id="viewerTc"></span>
+        </div>
+        <div class="row player-actions">
+          <button class="btn ghost small" type="button" id="playTrim" data-zh="播放裁切範圍">Play trimmed part</button>
+          <span class="muted" id="playerNote" data-zh="播放時會停在裁切的結尾。">Playback stops at the trim end.</span>
+        </div>
+        <div class="viewer-meta"><strong id="viewerTitle"></strong><span class="muted" id="viewerSub"></span><code class="mono path" id="viewerPath"></code></div>
+        <div class="trim">
+          <div class="row spread"><span class="label" data-zh="裁切">Trim</span><span class="mono" id="trimLen"></span></div>
+          <div class="trim-track"><div class="trim-sel" id="trimSel"><span class="play-mark" id="playMark"></span></div>
+            <input type="range" id="trimA" step="0.5" aria-label="Clip start" data-zh-aria-label="片段開始">
+            <input type="range" id="trimB" step="0.5" aria-label="Clip end" data-zh-aria-label="片段結束"></div>
+          <div class="row"><button class="btn link" type="button" id="undoTrim" data-zh="復原">Undo</button></div>
+        </div>
+        <label class="switch disabled"><input type="checkbox" disabled><span class="track"></span><span><span data-zh="模糊這段片段的旗幟">Blur flags in this clip</span> <span class="later" data-zh="之後">Later</span></span></label>
+        <div class="row remove-row">
+          <button class="btn ghost danger" type="button" id="removeBtn" data-zh="刪除片段">Remove clip</button>
+          <span class="confirm" id="confirmRm" hidden><span data-zh="要刪除這段片段嗎？">Remove this clip?</span> <button class="btn ghost small" type="button" id="confirmYes" data-zh="刪除">Remove</button> <button class="btn link" type="button" id="confirmNo" data-zh="保留">Keep</button></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Export (highlight_editor render; demo until the editor backend is connected) ===== -->
+  <section class="block" id="s-export" hidden>
+    <div class="block-head"><span class="step-no" data-zh="輸出">Export</span><h2 data-zh="輸出最終影片">Export the final video</h2><span class="tag-demo" id="exportDemoTag" hidden data-zh="示範執行沒有片段檔，無法輸出">Demo run: no clip files, so nothing to export</span></div>
+    <div class="card export">
+      <div class="run-top">
+        <div class="run-prog"><div class="run-label" id="exportLabel"></div><div class="bar"><span id="exportBar"></span></div></div>
+        <button class="btn ghost" type="button" id="exportCancel" hidden data-zh="取消輸出">Cancel export</button>
+      </div>
+      <p class="muted" id="exportSum"></p>
+      <div class="run-error" id="exportError" hidden>
+        <strong id="exportErrorTitle"></strong>
+        <ul id="exportErrorList"></ul>
+        <div class="row" id="exportOverwriteRow" hidden><button class="btn ghost small" type="button" id="exportOverwrite" data-zh="取代現有檔案">Replace the existing file</button></div>
+        <button class="btn link" type="button" id="exportDetailsBtn" data-zh="顯示詳細資訊">Show details</button>
+        <pre class="details" id="exportDetails" hidden></pre>
+      </div>
+      <div class="export-result" id="exportResult" hidden>
+        <video id="reelPlayer" controls playsinline preload="metadata"></video>
+        <div class="row spread"><code class="mono path" id="reelPath"></code><span class="mono" id="reelInfo"></span></div>
+        <ol class="chapters" id="reelChapters"></ol>
+      </div>
+      <button class="btn link disclosure" type="button" id="projectToggle" aria-expanded="false" aria-controls="projectBody"><span data-zh="顯示專案 JSON（給工程師）">Show project JSON (for engineers)</span><svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <div class="term project-body" id="projectBody" hidden>
+        <div class="cmds">
+          <div class="cmd"><div><div class="t"><b>CLI</b><span data-zh="後端執行">The backend runs</span></div><pre>python -m highlight_editor render - --base-dir .</pre></div><button class="btn ghost small" type="button" id="copyProject" data-zh="複製 JSON">Copy JSON</button></div>
+          <div class="cmd"><div><div class="t"><b>stdin</b><span data-zh="專案 JSON（格式見 highlight_editor/openapi.yaml）">Project JSON (format in highlight_editor/openapi.yaml)</span></div><pre id="exportJson"></pre><div class="note" id="exportNote"></div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span data-zh="片段會儲存到專案的 dataset 資料夾。API 規格：">Clips are saved to the project's dataset folder. API spec:</span>
+    <a href="/docs/highlight-builder.openapi.yaml">highlight-builder.openapi.yaml</a>
+  </footer>
+</main>
+
+<div class="cta" id="cta">
+  <span class="cta-sum" id="ctaSum"></span>
+  <button class="btn primary" type="button" id="mainBtn"></button>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/static/app.js?v=202610111511"></script>
+</body>
+</html>

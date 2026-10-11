@@ -669,6 +669,8 @@ def main():
             "official_highlight_url": (
                 official_highlight.playback_url if official_highlight is not None else ""
             ),
+            "batter": event.batter,
+            "pitcher": event.pitcher,
         })
 
     with open(args.out, "w", newline="", encoding="utf-8-sig") as f:
@@ -678,6 +680,7 @@ def main():
             "audio_calibrated_video_seconds", "audio_offset_seconds",
             "is_official_highlight", "official_highlight_title",
             "official_highlight_duration", "official_highlight_url",
+            "batter", "pitcher",
         ])
         writer.writeheader()
         writer.writerows(rows)

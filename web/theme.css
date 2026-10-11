@@ -1,0 +1,46 @@
+/* Direction 01 "Night Game": floodlit dark, condensed display type, one orange action colour. */
+:root {
+  color-scheme: dark;
+  --bg: #06080c;
+  --surface: #0d1118;
+  --surface-2: #131925;
+  --surface-3: #1a2131;
+  --line: #222a38;
+  --line-strong: #323c50;
+  --ink: #f4f6fa;
+  --muted: #8d97a8;
+  --faint: #5c6679;
+  --light: #cfe3ff;          /* floodlight: selected state */
+  --light-soft: rgba(207, 227, 255, 0.12);
+  --orange: #ff7a1a;         /* the one primary action */
+  --orange-ink: #140700;
+  --good: #5fd39a;
+  --bad: #ff5a4e;
+  --tc: "Noto Sans TC";
+  --display: "Big Shoulders Display", var(--tc), "Arial Narrow", sans-serif;
+  --body: "Manrope", var(--tc), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", var(--tc), ui-monospace, Menlo, monospace;
+  --radius: 20px;            /* direction 04 card shape */
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+}
+* { box-sizing: border-box; }
+/* Classes below set display (flex/grid/inline-flex), which would otherwise beat the hidden attribute. */
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--light); outline-offset: 2px; border-radius: 6px; }
+a { color: inherit; }
+
+.lang-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
+.lang-switch button { border: 0; background: none; color: var(--muted); font-size: .78rem; font-weight: 600; padding: 6px 11px; min-height: 30px; border-radius: 999px; transition: background .2s, color .2s; }
+.lang-switch button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+
+.grain::after { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0; opacity: .14; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

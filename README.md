@@ -10,6 +10,12 @@
 ## 專案結構
 
 ```text
+docs/api/
+├── highlight-builder.openapi.yaml   # 網頁後端 API
+└── highlight-editor.openapi.yaml    # 剪輯後台資料格式
+highlight_builder/                   # 網頁的本機後端
+tests/
+web/                                 # 首頁與工具頁
 sport_hightlight/
 ├── csv_data/
 │   ├── bottom2_ground_truth.csv
@@ -144,6 +150,7 @@ python sport_hightlight/mlb_highlight_groundtruth.py \
 - `audio_calibrated_video_seconds`：音訊校準後的時間
 - `is_official_highlight`：是否配對到 MLB 官方精華
 - `official_highlight_title`、`official_highlight_duration`、`official_highlight_url`：官方精華資訊
+- `batter`、`pitcher`：打者與投手（新版才有；舊 CSV 沒有這兩欄）
 
 ## 產生短片資料集
 
@@ -171,6 +178,51 @@ python sport_hightlight/make_clip.py \
 解碼一律使用 CPU：Intel 硬體解碼（`-hwaccel qsv`）會讓片段固定提早 4 格，NVIDIA／Intel 硬體解碼搭配 libx264 也沒有比較快。`--preset` 只對 libx264 有效。指定的硬體編碼器無法使用時，程式會先試編 1 格並直接報錯。硬體編碼的輸出可能因顯卡或驅動版本略有差異。Apple M 系列的 VideoToolbox 尚未支援，需要先在 Mac 上校正品質設定。
 
 整場資料集（指令見「完整轉播模式」）：72 個 20 秒短片，約 1.2 GB（`--preset fast` 時約 1.4 GB），片段之間沒有重疊；依目前配對規則，`positive` 為 16 個、`hard_negative` 為 56 個。`manifest.csv` 除了標籤與時間，還記錄 `game_pk` 與 `source_video`，合併多場比賽時可追溯來源。已存在的短片預設不重新編碼，需要重切請加 `--overwrite`。
+
+### 篩選事件
+
+`make_clip.py` 可以只剪符合條件的事件；不同條件需同時符合，同一條件內的多個值是「任一符合」。片段檔名中的編號仍是 CSV 原本的列號，改變篩選不會讓檔名變動。
+
+| 參數 | 說明 |
+|---|---|
+| `--event-types Strikeout "Home Run"` | 只保留這些 `event_type` |
+| `--batting-team away` / `--pitching-team home` | 依打擊方或投球方篩選；客隊（away）在上半局打擊 |
+| `--batters NAME ...` / `--pitchers NAME ...` | 依打者或投手篩選，需要 CSV 有 `batter`、`pitcher` 欄位 |
+| `--innings 7 9` | 局數範圍 |
+| `--scoring-only`、`--official-only` | 只保留得分事件、只保留 MLB 官方精華 |
+| `--progress-json` | 每處理一個事件就在 stderr 輸出一行 JSON 進度，供後端讀取 |
+
+```bash
+python sport_hightlight/make_clip.py \
+  --ground-truth sport_hightlight/csv_data/full_game_ground_truth.csv \
+  --video video/eltaMax10_Reds_Brewers_0913.mp4 \
+  --out-dir sport_hightlight/dataset/823734_reds_strikeout_homerun \
+  --event-types Strikeout "Home Run" --batting-team away
+```
+
+## 網頁介面（Highlight Builder）
+
+`web/` 是挑選事件並產生片段的網頁，`highlight_builder/` 是它的本機後端。瀏覽器本身不能啟動 Python，所以由一個小型 HTTP 伺服器提供網頁，並把每個 API 呼叫轉成 `python -m highlight_builder <指令>` 子程序：結果以一個 JSON 物件印在 stdout，進度以 JSON Lines 印在 stderr，exit code `0` 成功、`1` 輸入錯誤、`2` 工具錯誤（與 `docs/api/highlight-editor.openapi.yaml` 的慣例相同）。後端只用 Python 標準函式庫。
+
+```bash
+python3 -m highlight_builder.server          # http://localhost:8787 ，工具頁在 /app
+python3 -m highlight_builder.server --demo   # 強制示範模式
+python3 -m highlight_builder.server --real   # 強制實際執行
+```
+
+- **示範模式**：沒有安裝 ffmpeg、或 `video/` 裡只有 Git LFS 佔位檔時會自動啟用。執行時走過相同步驟、回報進度，但不呼叫工具、不寫任何檔案，頁面上會標示「示範」。
+- **實際執行**：需要 `git lfs pull` 取得影片、安裝 ffmpeg，以及工具用的 Python 套件（`requests`、`opencv-python`、`numpy`）。後端會自動用專案的 `.venv` 執行工具；要用別的 Python 可設定 `HIGHLIGHT_BUILDER_PYTHON=/path/to/python`。
+- **API 規格**：`docs/api/highlight-builder.openapi.yaml`（OpenAPI 3.1）。後端拒絕未知的工具、未知的參數，以及超出專案資料夾的路徑，而且不透過 shell 執行。
+- **剪輯（US-8）**：目前是示範流程，按鈕可以操作，但不會修改影片；之後接上 `highlight_editor`，串接方式見 [docs/highlight-editor-integration.md](docs/highlight-editor-integration.md)。
+
+CLI 也可以直接使用：
+
+```bash
+python3 -m highlight_builder game 823734            # 隊伍、球員、每個打席
+python3 -m highlight_builder commands job.json      # 列出會執行的指令
+python3 -m highlight_builder run job.json --demo    # 執行（示範模式）
+python3 -m unittest discover -s tests -t .           # 測試
+```
 
 ## 手動指定 anchor
 

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Highlight Builder</title>
+<meta name="description" content="Turn a full baseball broadcast into highlight clips: pick the plays, check the commands, run them.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 3 21 12 12 21 3 12Z' fill='none' stroke='%23ff7a1a' stroke-width='2.4'/><circle cx='12' cy='12' r='2.6' fill='%23cfe3ff'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700;900&display=swap">
+<link rel="stylesheet" href="/static/theme.css?v=202610111511">
+<script src="/static/i18n.js?v=202610111511"></script>
+<style>
+.lp { position: relative; overflow: hidden; isolation: isolate; }
+.lp::before { content: ""; position: absolute; inset: -20% -10% auto; height: 80vh; z-index: -1;
+  background: radial-gradient(40% 60% at 18% 0%, rgba(207,227,255,.30), transparent 70%), radial-gradient(35% 55% at 82% 0%, rgba(207,227,255,.24), transparent 70%); filter: blur(8px); }
+.wrap { width: min(1180px, calc(100% - 32px)); margin: 0 auto; position: relative; z-index: 1; }
+nav.top { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 22px 0; font-size: .86rem; color: var(--muted); flex-wrap: wrap; }
+.logo { font-family: var(--display); font-weight: 900; font-size: 1.3rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); text-decoration: none; display: inline-flex; gap: 9px; align-items: center; }
+nav.top .links { display: flex; gap: 22px; align-items: center; }
+nav.top .links a { text-decoration: none; }
+nav.top .links a:hover { color: var(--ink); }
+.pill { border: 1px solid rgba(244,246,250,.3); border-radius: 999px; padding: 7px 16px; color: var(--ink); text-decoration: none; }
+.pill:hover { border-color: var(--ink); }
+.hero { padding: 72px 0 32px; display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 32px; align-items: end; }
+.hero h1 { margin: 0; font-family: var(--display); font-weight: 900; text-transform: uppercase; font-size: clamp(3.4rem, 10vw, 8.4rem); line-height: .84;
+  background: linear-gradient(100deg, #f4f6fa 0%, #f4f6fa 40%, #ffffff 48%, #cfe3ff 50%, #f4f6fa 56%, #f4f6fa 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sweep 6s ease-in-out infinite; }
+.hero h1 em { font-style: normal; color: var(--orange); -webkit-text-fill-color: var(--orange); }
+@keyframes sweep { 0%, 20% { background-position: 100% 0; } 60%, 100% { background-position: 0 0; } }
+.hero p { color: var(--muted); margin: 0 0 18px; max-width: 36ch; font-size: 1.02rem; }
+.cta { display: inline-flex; gap: 10px; align-items: center; background: var(--orange); color: var(--orange-ink); font-weight: 800; padding: 14px 22px; border-radius: 6px; text-decoration: none; transition: transform .15s var(--ease), filter .2s; }
+.cta:hover { filter: brightness(1.07); }
+.cta:active { transform: scale(.97); }
+.frame { border: 1px solid rgba(244,246,250,.14); border-radius: 8px; overflow: hidden; }
+.screen { aspect-ratio: 21/8; position: relative; background: radial-gradient(70% 90% at 50% 120%, #1d4a2c, #0c1a12 60%, #070b09); }
+.screen svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.screen .tag { position: absolute; left: 18px; top: 16px; font-family: var(--mono); font-size: .72rem; letter-spacing: .1em; color: var(--light); text-transform: uppercase; }
+.screen .now { position: absolute; right: 18px; bottom: 16px; text-align: right; }
+.screen .now b { display: block; font-family: var(--display); font-size: 1.8rem; text-transform: uppercase; letter-spacing: .02em; }
+.screen .now span { font-size: .8rem; color: var(--muted); }
+.timeline { position: relative; height: 50px; background: #0b0e14; border-top: 1px solid rgba(244,246,250,.1); }
+.timeline .track { position: absolute; left: 18px; right: 18px; top: 22px; height: 2px; background: rgba(244,246,250,.16); }
+.mk { position: absolute; top: -8px; width: 2px; height: 18px; background: var(--muted); animation: lightup .5s var(--ease) both; }
+.mk.hr { background: var(--orange); height: 24px; top: -11px; width: 3px; }
+.mk.k { background: var(--light); }
+@keyframes lightup { from { opacity: 0; transform: scaleY(.2); } to { opacity: 1; transform: none; } }
+.timeline .legend { position: absolute; left: 18px; bottom: 5px; font-family: var(--mono); font-size: .64rem; color: var(--muted); display: flex; gap: 14px; }
+.timeline .legend i { display: inline-block; width: 8px; height: 2px; margin-right: 5px; vertical-align: middle; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-top: 20px; background: rgba(244,246,250,.12); border: 1px solid rgba(244,246,250,.12); }
+.stats div { background: var(--bg); padding: 16px 18px; }
+.stats b { display: block; font-family: var(--display); font-weight: 900; font-size: 2.8rem; line-height: 1; }
+.stats span { font-size: .8rem; color: var(--muted); }
+section.how { padding: 96px 0 40px; }
+.kicker { font-family: var(--mono); font-size: .76rem; letter-spacing: .14em; text-transform: uppercase; color: var(--orange); }
+.how h2 { font-family: var(--display); font-weight: 900; text-transform: uppercase; font-size: clamp(2.2rem, 5vw, 3.6rem); line-height: .9; margin: 10px 0 28px; }
+.steps3 { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 14px; }
+.s3 { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 10px; transition: transform .25s var(--ease), border-color .25s; }
+.s3:hover { transform: translateY(-3px); border-color: var(--line-strong); }
+.s3 .n { font-family: var(--mono); color: var(--faint); font-size: .8rem; }
+.s3 h3 { margin: 0; font-size: 1.15rem; }
+.s3 p { margin: 0; color: var(--muted); font-size: .9rem; }
+.s3 code { font-family: var(--mono); font-size: .78rem; color: var(--light); background: var(--surface-2); border-radius: 8px; padding: 10px 12px; display: block; overflow-x: auto; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips span { font-size: .78rem; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: var(--surface-2); }
+.chips span.on { border-color: rgba(207,227,255,.55); background: var(--light-soft); }
+footer { padding: 60px 0 28px; border-top: 1px solid var(--line); margin-top: 60px; }
+footer .row { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: .84rem; }
+footer .row a { text-decoration: none; }
+footer .row a:hover { color: var(--ink); }
+.wordmark { font-family: var(--display); font-weight: 900; text-transform: uppercase; font-size: clamp(3rem, 13vw, 11rem); line-height: .8; color: transparent; -webkit-text-stroke: 1px var(--line-strong); white-space: nowrap; overflow: hidden; margin-top: 30px; user-select: none; }
+@media (max-width: 860px) {
+  .hero, .steps3 { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  nav.top .links a:not(.pill) { display: none; }
+}
+</style>
+</head>
+<body class="lp grain">
+<div class="wrap">
+  <nav class="top">
+    <a class="logo" href="/"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 21 12 12 21 3 12Z" stroke="#ff7a1a" stroke-width="2.2"/><circle cx="12" cy="12" r="2.6" fill="#cfe3ff"/></svg>Highlight Builder</a>
+    <div class="links">
+      <a href="#how" data-zh="運作方式">How it works</a>
+      <a href="/docs/highlight-builder.openapi.yaml" data-zh="API 規格">API spec</a>
+      <div class="lang-switch" role="group" aria-label="Language 語言"><button type="button" data-set-lang="zh" aria-pressed="false">中文</button><button type="button" data-set-lang="en" aria-pressed="true">EN</button></div>
+      <a class="pill" href="/app" data-zh="開啟工具">Open builder</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <h1 data-zh="每個三振，<br>每支<em>全壘打</em>，<br>一次剪好。">Every K.<br>Every <em>bomb.</em><br>Cut.</h1>
+    <div>
+      <p data-zh="選一場轉播，挑出想要的打席，按下執行。三小時的比賽，變成二十秒一段的精華。">Pick a broadcast, choose the plate appearances you want, press Run. Three hours of baseball become 20-second highlights.</p>
+      <a class="cta" href="/app"><span data-zh="開始剪輯">Start cutting</span> →</a>
+    </div>
+  </header>
+
+  <div class="frame">
+    <div class="screen">
+      <svg viewBox="0 0 840 320" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g fill="none" stroke="rgba(255,255,255,.22)" stroke-width="2"><path d="M420 300 L250 150 L420 40 L590 150 Z"/><path d="M420 300 L60 -60 M420 300 L780 -60"/><circle cx="420" cy="175" r="16"/></g></svg>
+      <span class="tag" data-zh="第 6 局上 · 1:30:01">Top 6 · 1:30:01</span>
+      <div class="now"><b data-zh="Suárez 三分砲">Suárez 3-run HR</b><span data-zh="MLB 官方精華 · 本季第 24 轟">Official MLB highlight · No. 24</span></div>
+    </div>
+    <div class="timeline"><div class="track"><span class="mk k" style="left:3.96%"></span><span class="mk k" style="left:5.91%"></span><span class="mk k" style="left:6.57%"></span><span class="mk " style="left:7.61%"></span><span class="mk " style="left:10.31%"></span><span class="mk k" style="left:15.39%"></span><span class="mk hr" style="left:17.56%"></span><span class="mk k" style="left:18.50%"></span><span class="mk k" style="left:20.63%"></span><span class="mk k" style="left:21.43%"></span><span class="mk k" style="left:22.75%"></span><span class="mk k" style="left:25.49%"></span><span class="mk " style="left:32.30%"></span><span class="mk k" style="left:33.59%"></span><span class="mk k" style="left:35.57%"></span><span class="mk k" style="left:36.65%"></span><span class="mk " style="left:41.50%"></span><span class="mk hr" style="left:46.73%"></span><span class="mk k" style="left:49.71%"></span><span class="mk " style="left:51.84%"></span><span class="mk hr" style="left:58.08%"></span><span class="mk " style="left:64.95%"></span><span class="mk k" style="left:66.44%"></span><span class="mk " style="left:74.05%"></span><span class="mk k" style="left:75.60%"></span><span class="mk k" style="left:79.04%"></span><span class="mk " style="left:80.73%"></span></div>
+      <div class="legend"><span><i style="background:#ff7a1a"></i><span data-zh="全壘打">Home run</span></span><span><i style="background:#cfe3ff"></i><span data-zh="三振">Strikeout</span></span><span><i style="background:#8d97a8"></i><span data-zh="其他官方精華">Other MLB highlight</span></span></div>
+    </div>
+  </div>
+  <div class="stats">
+    <div><b>72</b><span data-zh="打席">plate appearances</span></div>
+    <div><b>15</b><span data-zh="三振">strikeouts</span></div>
+    <div><b>3</b><span data-zh="全壘打">home runs</span></div>
+    <div><b>16</b><span data-zh="MLB 官方精華">official MLB highlights</span></div>
+  </div>
+
+  <section class="how" id="how">
+    <span class="kicker" data-zh="運作方式">How it works</span>
+    <h2 data-zh="三個步驟，<br>從轉播到精華。">Three steps from<br>broadcast to clips.</h2>
+    <div class="steps3">
+      <div class="s3"><span class="n">01</span><h3 data-zh="挑選事件">Pick the plays</h3><p data-zh="輸入比賽編號，隊伍、球員與事件類型會從真實比賽載入。即時計數告訴你會產生幾段。">Enter the game number and the teams, players and play types load from the real game. A live count shows how many clips you'll get.</p>
+        <div class="chips"><span class="on" data-zh="紅人 · 打擊">Reds · batting</span><span class="on" data-zh="三振">Strikeout</span><span class="on" data-zh="全壘打">Home Run</span><span data-zh="保送">Walk</span></div></div>
+      <div class="s3"><span class="n">02</span><h3 data-zh="檢查指令">Check the commands</h3><p data-zh="執行前先看到後端會跑的確切指令，也可以複製自己執行。">See the exact commands the backend will run before anything happens, or copy them to run yourself.</p>
+        <code>python sport_hightlight/make_clip.py --event-types Strikeout "Home Run" --batting-team away</code></div>
+      <div class="s3"><span class="n">03</span><h3 data-zh="執行並微調">Run and fine-tune</h3><p data-zh="按下執行，每個步驟都有即時進度。完成後在頁面上裁切與排序片段。">Press Run and watch each step's progress live. When it's done, trim and reorder the clips on the page.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="row">
+      <span data-zh="目前在你的電腦上執行，不會上傳任何檔案。">Runs on your computer for now. Nothing is uploaded.</span>
+      <span><a href="/app" data-zh="開啟工具">Open builder</a> · <a href="/docs/highlight-builder.openapi.yaml" data-zh="API 規格">API spec</a></span>
+    </div>
+    <div class="wordmark" aria-hidden="true">Highlight Builder</div>
+  </footer>
+</div>
+<script>
+document.querySelectorAll(".mk").forEach((m, i) => { m.style.animationDelay = (0.3 + i * 0.05) + "s"; });
+</script>
+</body>
+</html>
