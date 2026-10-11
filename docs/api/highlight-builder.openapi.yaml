@@ -186,8 +186,190 @@ paths:
                 $ref: "#/components/schemas/JobEventResponse"
         "4XX":
           $ref: "#/components/responses/ClientErrorResponse"
+  /edit/clips:
+    post:
+      operationId: list_edit_clips
+      description: Runs highlight_editor list. Gives each clip's real fps and frame count so trims convert exactly.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                manifests:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ProjectPathType"
+                  minItems: 1
+              required:
+                - manifests
+        required: true
+      responses:
+        "200":
+          description: 200 response for list_edit_clips
+          content:
+            application/json:
+              schema:
+                $ref: "../../highlight_editor/openapi.yaml#/components/schemas/ListClipsResult"
+        "4XX":
+          $ref: "#/components/responses/EditorErrorResponse"
+  /edit/validate:
+    post:
+      operationId: validate_edit_project
+      description: Runs highlight_editor validate. The output must be under out/ and end in .mp4.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "../../highlight_editor/openapi.yaml#/components/schemas/Project"
+        required: true
+      responses:
+        "200":
+          description: 200 response for validate_edit_project
+          content:
+            application/json:
+              schema:
+                $ref: "../../highlight_editor/openapi.yaml#/components/schemas/ValidateResult"
+        "4XX":
+          $ref: "#/components/responses/EditorErrorResponse"
+  /renders:
+    post:
+      operationId: create_render
+      description: Validates the project, then runs highlight_editor render in the background (US-8 export).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "../../highlight_editor/openapi.yaml#/components/schemas/Project"
+        required: true
+      responses:
+        "200":
+          description: 200 response for create_render
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/EditorErrorResponse"
+  /renders/{render_id}:
+    parameters:
+      - name: render_id
+        in: path
+        schema:
+          type: string
+          pattern: ^render_[0-9a-f]{20}$
+        required: true
+    get:
+      operationId: get_render
+      responses:
+        "200":
+          description: 200 response for get_render
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /renders/{render_id}/events:
+    parameters:
+      - name: render_id
+        in: path
+        schema:
+          type: string
+        required: true
+    get:
+      operationId: list_render_events
+      description: Server-sent events (JOB_UPDATE, then JOB_DONE) carrying RenderResponse.
+      responses:
+        "200":
+          description: 200 response for list_render_events
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
+  /renders/{render_id}/cancel:
+    parameters:
+      - name: render_id
+        in: path
+        schema:
+          type: string
+        required: true
+    post:
+      operationId: cancel_render
+      description: Stops the render. highlight_editor removes its temporary files and writes no output.
+      responses:
+        "200":
+          description: 200 response for cancel_render
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientErrorResponse"
 components:
   schemas:
+    RenderResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatuses"
+        phase:
+          type: string
+          enum:
+            - queued
+            - segments
+            - concat
+            - done
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        output:
+          type: string
+        progress:
+          $ref: "#/components/schemas/ProgressResponse"
+        current_segment:
+          type:
+            - string
+            - "null"
+        result:
+          oneOf:
+            - type: "null"
+            - $ref: "../../highlight_editor/openapi.yaml#/components/schemas/RenderResult"
+        error:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/EditorErrorBody"
+      required:
+        - id
+        - status
+        - phase
+        - progress
+    EditorErrorBody:
+      type: object
+      description: >-
+        highlight_editor errors mapped to Highlight Builder codes (400 50035, 404 40401,
+        409 40901 output_exists, 500 50001/50002). editor_errors keeps the original list.
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        editor_errors:
+          type: array
+          items:
+            $ref: "../../highlight_editor/openapi.yaml#/components/schemas/Error"
+      required:
+        - code
+        - message
     JobIdType:
       type: string
       pattern: ^job_[0-9A-HJKMNP-TV-Z]{26}$
@@ -911,6 +1093,14 @@ components:
       scheme: bearer
       description: Not used on localhost. Required in the later server phase.
   responses:
+    EditorErrorResponse:
+      description: highlight_editor rejected the request (or the output isn't under out/)
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/EditorErrorBody"
+              - $ref: "#/components/schemas/ErrorResponse"
     ClientErrorResponse:
       description: Client error response
       content:

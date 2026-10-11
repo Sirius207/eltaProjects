@@ -3,7 +3,7 @@
 給負責 `highlight_editor`（剪輯後台）的同事。說明網頁目前做到哪裡、`docs/api/highlight-editor.openapi.yaml` 在這裡扮演什麼角色，以及接上去需要做的事。
 
 - 分支：`feature/highlight-builder-web`（尚未 commit / 開 PR）
-- 更新：2026-10-11
+- 更新：2026-10-11（highlight_editor 已合併進來並串接完成；以下第 3、4 節保留當初的串接說明）
 
 ## 1. 目前進度
 
@@ -13,9 +13,9 @@
 | 工具頁：選影片、比賽、篩選事件、片段設定（US-1～US-5） | 完成 | `web/app.html`、`web/app.js` |
 | 產生並檢查指令（US-6） | 完成，指令由後端產生 | `POST /api/v1/jobs/preview` |
 | 在頁面上執行並看進度（US-7） | 完成；含停止、重試、重新整理後重新連線 | `POST /api/v1/jobs`、`GET /api/v1/jobs/{id}/events` |
-| 微調片段（US-8）：裁切、刪除、排序 | **示範流程**：只改畫面狀態，不改檔案 | `web/app.js` |
+| 微調片段（US-8）：裁切、刪除、排序 | 完成；編輯只存在頁面狀態，輸出時轉成 `Project` | `web/app.js` |
 | 播放片段 | 完成；影片檔存在時可播放、可拖時間軸 | `GET /media/<path>` |
-| 輸出最終影片 | **只組出 `Project` JSON，還沒呼叫 highlight_editor** | `web/app.js` 的 `buildProject()`、`exportVideo()` |
+| 輸出最終影片 | **已串接 highlight_editor**：`list` 取得實際 fps、`validate` 檢查、`render` 背景執行並即時顯示進度，完成後直接播放 | `highlight_builder/editor.py`、`POST /api/v1/renders` |
 | `make_clip.py` 篩選參數、`--progress-json` | 完成 | `sport_hightlight/make_clip.py` |
 | ground truth CSV 新增 `batter`、`pitcher` 欄位 | 完成 | `sport_hightlight/mlb_highlight_groundtruth.py` |
 | 單元測試 | 33 個，全數通過 | `tests/` |
@@ -50,7 +50,9 @@ mlb_highlight_groundtruth.py → make_clip.py → mask_flags.py
 
 ## 3. highlight-editor.openapi.yaml 目前的角色
 
-**目前沒有任何程式呼叫 `highlight_editor`**（repo 裡還沒有這個套件）。這份規格現在用在兩個地方：
+> **更新**：`highlight_editor` 已從 chyan26/eltaProjects#2 合併進來，網頁的「輸出最終影片」會透過 `highlight_builder/editor.py` 以子程序呼叫 `list`／`validate`／`render`，端點見 `docs/api/highlight-builder.openapi.yaml`（`list_edit_clips`、`validate_edit_project`、`create_render`、`get_render`、`list_render_events`、`cancel_render`）。輸出檔只允許寫在 `out/` 底下。以下是串接前的說明。
+
+當初（串接前）repo 裡還沒有這個套件，這份規格用在兩個地方：
 
 1. **子程序慣例**：`highlight_builder` 的 CLI 照這份規格的慣例設計——stdout 只有一個 JSON 結果、stderr 每行一個 JSON 進度事件、exit code `0` 成功／`1` 輸入或驗證錯誤／`2` 工具或檔案系統錯誤、以 `ok` 判斷成功。所以伺服器呼叫兩邊的方式會一樣。
 2. **輸出資料格式**：按下「輸出最終影片」時，頁面依規格組出 `Project`（片段依清單順序成為 `segments`，裁切轉成 `start_frame`／`end_frame`），並顯示 `python -m highlight_editor render - --base-dir .`，但不會執行。
