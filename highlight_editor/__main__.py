@@ -50,7 +50,7 @@ def load_project_json(source: str) -> Tuple[Any, Optional[EditorError]]:
     except UnicodeDecodeError:
         return None, EditorError("invalid_json", f"專案檔不是 UTF-8 編碼：{source}")
     try:
-        return json.loads(text.lstrip("﻿")), None
+        return json.loads(text.lstrip("\ufeff")), None
     except json.JSONDecodeError as exc:
         return None, EditorError(
             "invalid_json", f"專案檔不是合法的 JSON：第 {exc.lineno} 行第 {exc.colno} 欄，{exc.msg}",
