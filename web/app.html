@@ -223,7 +223,8 @@
 
   <!-- ===== Step 5: edit (demo flow for now) ===== -->
   <section class="block" id="s-edit">
-    <div class="block-head"><span class="step-no" data-zh="步驟 5">Step 5</span><h2 data-zh="微調片段">Fine-tune the clips</h2><span class="tag-demo" data-zh="示範流程：按鈕可以點，但還不會修改影片">Demo flow: buttons work, files don't change yet</span></div>
+    <div class="block-head"><span class="step-no" data-zh="步驟 5">Step 5</span><h2 data-zh="微調片段">Fine-tune the clips</h2><button class="btn ghost small" type="button" id="exportFromEdit" hidden data-zh="輸出這些片段">Export these clips</button></div>
+    <div class="edit-stale" id="editStale" hidden data-zh="這些片段來自上一次執行，之後你改了篩選條件。按下方「產生指令」再執行，就會換成新的片段；也可以先輸出這些片段。">These clips come from the previous run, and you've changed the filters since. Press “Generate commands” below and run again to replace them, or export these clips first.</div>
     <p class="empty" id="editEmpty" data-zh="執行完成後，片段會出現在這裡。">Clips appear here when a run finishes.</p>
     <div class="bento edit" id="editor" hidden>
       <div class="card c-list">
@@ -262,15 +263,31 @@
 
   <!-- ===== Export (highlight_editor render; demo until the editor backend is connected) ===== -->
   <section class="block" id="s-export" hidden>
-    <div class="block-head"><span class="step-no" data-zh="輸出">Export</span><h2 data-zh="輸出最終影片">Export the final video</h2><span class="tag-demo" data-zh="示範：剪輯後端接上後才會真的輸出">Demo: the file is made once the editor backend is connected</span></div>
-    <div class="card term">
-      <div class="term-bar">
-        <span class="term-sum" id="exportSum"></span>
-        <button class="btn ghost small" type="button" id="copyProject" data-zh="複製專案 JSON">Copy project JSON</button>
+    <div class="block-head"><span class="step-no" data-zh="輸出">Export</span><h2 data-zh="輸出最終影片">Export the final video</h2><span class="tag-demo" id="exportDemoTag" hidden data-zh="示範執行沒有片段檔，無法輸出">Demo run: no clip files, so nothing to export</span></div>
+    <div class="card export">
+      <div class="run-top">
+        <div class="run-prog"><div class="run-label" id="exportLabel"></div><div class="bar"><span id="exportBar"></span></div></div>
+        <button class="btn ghost" type="button" id="exportCancel" hidden data-zh="取消輸出">Cancel export</button>
       </div>
-      <div class="cmds">
-        <div class="cmd"><div><div class="t"><b>CLI</b><span data-zh="剪輯後端會執行">The editor backend will run</span></div><pre id="exportCmd"></pre></div></div>
-        <div class="cmd"><div><div class="t"><b>stdin</b><span data-zh="專案 JSON（格式見 docs/api/highlight-editor.openapi.yaml）">Project JSON (format in docs/api/highlight-editor.openapi.yaml)</span></div><pre id="exportJson"></pre><div class="note" id="exportNote"></div></div></div>
+      <p class="muted" id="exportSum"></p>
+      <div class="run-error" id="exportError" hidden>
+        <strong id="exportErrorTitle"></strong>
+        <ul id="exportErrorList"></ul>
+        <div class="row" id="exportOverwriteRow" hidden><button class="btn ghost small" type="button" id="exportOverwrite" data-zh="取代現有檔案">Replace the existing file</button></div>
+        <button class="btn link" type="button" id="exportDetailsBtn" data-zh="顯示詳細資訊">Show details</button>
+        <pre class="details" id="exportDetails" hidden></pre>
+      </div>
+      <div class="export-result" id="exportResult" hidden>
+        <video id="reelPlayer" controls playsinline preload="metadata"></video>
+        <div class="row spread"><code class="mono path" id="reelPath"></code><span class="mono" id="reelInfo"></span></div>
+        <ol class="chapters" id="reelChapters"></ol>
+      </div>
+      <button class="btn link disclosure" type="button" id="projectToggle" aria-expanded="false" aria-controls="projectBody"><span data-zh="顯示專案 JSON（給工程師）">Show project JSON (for engineers)</span><svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <div class="term project-body" id="projectBody" hidden>
+        <div class="cmds">
+          <div class="cmd"><div><div class="t"><b>CLI</b><span data-zh="後端執行">The backend runs</span></div><pre>python -m highlight_editor render - --base-dir .</pre></div><button class="btn ghost small" type="button" id="copyProject" data-zh="複製 JSON">Copy JSON</button></div>
+          <div class="cmd"><div><div class="t"><b>stdin</b><span data-zh="專案 JSON（格式見 highlight_editor/openapi.yaml）">Project JSON (format in highlight_editor/openapi.yaml)</span></div><pre id="exportJson"></pre><div class="note" id="exportNote"></div></div></div>
+        </div>
       </div>
     </div>
   </section>

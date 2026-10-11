@@ -29,7 +29,7 @@
   const defaults = {
     videoPath: "video/eltaMax10_Reds_Brewers_0913.mp4", gamePk: 823734, mode: "full", offset: 150.5,
     halfInning: 2, halfSide: "bottom", autoAnchor: true, anchorSeconds: "", audio: true,
-    types: ["Strikeout", "Home Run"], teams: ["away"], role: "bat", batters: [], pitchers: [],
+    types: ["Strikeout", "Home Run"], teams: [], role: "bat", batters: [], pitchers: [],
     innFrom: 1, innTo: 9, scoring: false, official: false, pre: 8, post: 12, outDir: "", outEdited: false,
     overwrite: false, blur: false, blurMode: "blur", view: "multi", showCmds: false, lastJobId: null,
   };
@@ -337,6 +337,8 @@
     const has = R.clips.length > 0;
     $("#editor").hidden = !has;
     $("#editEmpty").hidden = has;
+    $("#exportFromEdit").hidden = !has;
+    $("#editStale").hidden = !(has && R.stale);
     if (!has) return;
     R.sel = Math.min(R.sel, R.clips.length - 1);
     $("#clipCount").textContent = clipsN(R.clips.length);
@@ -360,7 +362,7 @@
     $("#playMark").style.left = `${mark * 100}%`;
     $("#playMark").style.display = S.pre >= c.a && S.pre <= c.b ? "block" : "none";
     $("#confirmRm").hidden = true; $("#removeBtn").hidden = false;
-    if (!$("#s-export").hidden) refreshExport();
+    renderExport();
   }
   // ------------------------------------------------------------------ player
   const player = () => $("#player");
@@ -407,33 +409,144 @@
     v.addEventListener("play", () => { const c = R.clips[R.sel]; if (c && (v.currentTime < c.a || v.currentTime >= c.b - 0.05)) v.currentTime = c.a; });
   }
 
-  // ------------------------------------------------------------------ export (highlight_editor Project)
+  // ------------------------------------------------------------------ export (highlight_editor)
   const DEFAULT_FPS = 30000 / 1001;
-  function buildProject() {
+  const parseFps = (txt) => { if (!txt) return null; const [a, b] = String(txt).split("/").map(Number); return b ? a / b : a || null; };
+  function outputPath() {
     const bits = [String(S.gamePk), ...[...S.types].slice(0, 3).map((x) => slug(x).replace(/_/g, ""))];
+    return `out/reels/${bits.join("_")}_reel.mp4`;
+  }
+  function buildProject(overwrite = false) {
     return {
       version: 1,
-      output: `out/reels/${bits.join("_")}_reel.mp4`,
-      overwrite: false,
+      output: outputPath(),
+      overwrite,
       settings: { width: null, height: null, fps: null, crf: 20, preset: "fast" },
       segments: R.clips.map((c, i) => {
         const fps = c.fps_value || DEFAULT_FPS;
         const seg = { id: String(i + 1), clip: c.path, start_frame: Math.round(c.a * fps) };
-        seg.end_frame = c.b >= c.duration ? null : Math.round(c.b * fps);
+        const end = Math.round(c.b * fps);
+        seg.end_frame = c.b >= c.duration || (c.frame_count && end >= c.frame_count) ? null : end;
         return seg;
       }),
     };
   }
-  function exportVideo() {
-    const project = buildProject();
+  // Ask highlight_editor for each clip's real fps and frame count so trims convert exactly.
+  async function enrichClips(job) {
+    if (!job || job.demo || !job.outputs.manifest) return;
+    try {
+      const res = await api("POST", "/edit/clips", { manifests: [job.outputs.manifest] });
+      const byPath = new Map(res.clips.map((c) => [c.clip, c]));
+      R.clips.forEach((c) => {
+        const info = byPath.get(c.path);
+        if (!info || !info.exists) return;
+        const fps = parseFps(info.fps);
+        if (!fps || !info.frame_count) return;
+        const duration = info.frame_count / fps;
+        const wasFull = c.b >= c.duration;
+        Object.assign(c, { fps_value: fps, fps_text: info.fps, frame_count: info.frame_count, duration });
+        if (wasFull) c.b = duration;
+        c.a = Math.min(c.a, duration - 0.5);
+      });
+      renderEdit(); renderCta();
+    } catch (e) { /* keep the estimate; export validation will catch problems */ }
+  }
+
+  const X = { render: null, es: null, lastProject: null, conflict: false };
+  function segmentName(id) {
+    const c = R.clips[Number(id) - 1];
+    return c ? `${typeName(c.event_type)}${c.batter ? " · " + c.batter : ""}` : `#${id}`;
+  }
+  function editorErrorText(er) {
+    const zh = { out_of_range: "裁切範圍超出片段長度", clip_not_found: "找不到片段檔案", invalid_media: "片段不是可讀的影片", output_exists: "輸出檔已存在", ffmpeg_not_found: "沒有安裝 ffmpeg", ffmpeg_failed: "ffmpeg 執行失敗", io_error: "檔案系統錯誤", invalid_value: "設定值不正確", missing_field: "缺少必要欄位", manifest_not_found: "找不到 manifest" };
+    const where = er.segment_id ? `${segmentName(er.segment_id)}: ` : "";
+    return where + (HB.lang === "zh" && zh[er.code] ? `${zh[er.code]}（${er.message}）` : er.message);
+  }
+  function renderExport() {
+    const sec = $("#s-export");
+    if (sec.hidden) return;
+    const demo = R.job && R.job.demo;
+    const project = buildProject(X.conflict);
     const secs = R.clips.reduce((sum, c) => sum + (c.b - c.a), 0);
+    $("#exportDemoTag").hidden = !demo;
+    $("#exportSum").textContent = t(`${clipsN(project.segments.length)} joined in list order · about ${fmtTime(secs)} · saved to ${project.output}`, `${clipsN(project.segments.length)}依清單順序合併 · 約 ${fmtTime(secs)} · 存到 ${project.output}`);
+    $("#exportJson").innerHTML = hlJson(JSON.stringify(X.lastProject || project, null, 2));
+    $("#exportNote").textContent = R.clips.every((c) => c.fps_value) ? t("Frames use each clip's real fps from highlight_editor. end_frame null means “to the end of the clip”.", "影格依 highlight_editor 讀到的每段實際 fps 換算。end_frame 為 null 代表「到片段結尾」。") : t("Frames assume 29.97 fps (clip files weren't readable). end_frame null means “to the end of the clip”.", "影格以 29.97 fps 估算（讀不到片段檔）。end_frame 為 null 代表「到片段結尾」。");
+    const r = X.render;
+    let label = demo ? t("A demo run makes no clip files, so there's nothing to export. Run for real to export.", "示範執行不會產生片段檔，所以沒有東西可輸出。實際執行後才能輸出。") : t("Ready to export.", "可以輸出。");
+    let pct = 0;
+    if (r) {
+      const p = r.progress || { done: 0, total: 1 };
+      if (r.status === "queued") label = t("Starting…", "準備中…");
+      else if (r.status === "running" && r.phase === "concat") { label = t("Joining the clips…", "正在合併片段…"); pct = 92; }
+      else if (r.status === "running") { label = t(`Processing clip ${Math.min(p.done + 1, p.total)} of ${p.total}${r.current_segment ? " · " + segmentName(r.current_segment) : ""}`, `正在處理第 ${Math.min(p.done + 1, p.total)} / ${p.total} 段${r.current_segment ? " · " + segmentName(r.current_segment) : ""}`); pct = Math.round((p.done / Math.max(1, p.total)) * 90); }
+      else if (r.status === "succeeded") { label = t("Done. Your final video is ready.", "完成，最終影片已產生。"); pct = 100; }
+      else if (r.status === "cancelled") label = t("Export cancelled. No file was written.", "已取消輸出，沒有寫入檔案。");
+      else if (r.status === "failed") label = t("The export stopped with a problem.", "輸出時發生問題而停止。");
+    }
+    $("#exportLabel").textContent = label;
+    $("#exportBar").style.width = `${pct}%`;
+    $("#exportBar").parentElement.classList.toggle("fail", !!r && r.status === "failed");
+    $("#exportCancel").hidden = !(r && (r.status === "running" || r.status === "queued"));
+    const done = r && r.status === "succeeded" && r.result;
+    $("#exportResult").hidden = !done;
+    if (done) {
+      const src = "/media/" + r.result.output.split("/").map(encodeURIComponent).join("/");
+      const v = $("#reelPlayer");
+      if (v.dataset.src !== src + r.id) { v.dataset.src = src + r.id; v.src = `${src}?v=${encodeURIComponent(r.id)}`; }
+      $("#reelPath").textContent = r.result.output;
+      $("#reelInfo").textContent = `${fmtTime(r.result.duration)} · ${r.result.settings.width}×${r.result.settings.height} · ${r.result.settings.fps} fps`;
+      $("#reelChapters").innerHTML = r.result.segments.map((sg, i) => `<li><button type="button" data-chapter="${sg.output_start}"><b>${fmtTime(sg.output_start)}</b>${esc(segmentName(sg.id))}</button></li>`).join("");
+    }
+  }
+  function showExportErrors(body) {
+    const errs = (body && body.editor_errors) || [];
+    const fieldErrs = body && body.errors && body.errors.output ? body.errors.output._errors : [];
+    X.conflict = errs.some((e) => e.code === "output_exists");
+    $("#exportError").hidden = false;
+    $("#exportErrorTitle").textContent = X.conflict ? t("A file with this name already exists.", "已經有同名的輸出檔。") : t("The export can't start with these edits.", "這些剪輯設定無法輸出。");
+    const items = [...errs.map(editorErrorText), ...fieldErrs.map((e) => e.message)];
+    if (!items.length && body && body.message) items.push(body.message);
+    $("#exportErrorList").innerHTML = items.map((x) => `<li>${esc(x)}</li>`).join("");
+    $("#exportOverwriteRow").hidden = !X.conflict;
+    const detail = errs.map((e) => e.detail).filter(Boolean).join("\n\n");
+    $("#exportDetails").textContent = detail || t("No extra details.", "沒有其他詳細資訊。");
+  }
+  async function exportVideo(overwrite = false) {
     $("#s-export").hidden = false;
-    $("#exportSum").textContent = t(`${clipsN(project.segments.length)} joined in list order · about ${fmtTime(secs)} · ${project.output}`, `${clipsN(project.segments.length)}依清單順序合併 · 約 ${fmtTime(secs)} · ${project.output}`);
-    $("#exportCmd").textContent = "python -m highlight_editor render - --base-dir .";
-    $("#exportJson").innerHTML = hlJson(JSON.stringify(project, null, 2));
-    $("#exportNote").textContent = t("Frames assume 29.97 fps until the editor reads each clip's real fps. end_frame null means “to the end of the clip”.", "在剪輯後端讀到每段片段的實際 fps 之前，影格以 29.97 fps 估算。end_frame 為 null 代表「到片段結尾」。");
-    toast(t("Demo: export prepared. The editor backend isn't connected yet.", "示範：已準備好輸出內容，剪輯後端尚未接上。"));
+    $("#exportError").hidden = true; $("#exportDetails").hidden = true;
     setTimeout(() => document.getElementById("s-export").scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    if (R.job && R.job.demo) { X.render = null; renderExport(); toast(t("Demo run: nothing to export.", "示範執行：沒有東西可以輸出。")); return; }
+    const project = buildProject(overwrite);
+    X.lastProject = project; X.conflict = false;
+    try {
+      X.render = await api("POST", "/renders", project);
+      renderExport(); renderCta(); watchRender(X.render.id);
+    } catch (e) {
+      X.render = null; renderExport(); showExportErrors(e.body); renderCta();
+    }
+  }
+  function watchRender(id) {
+    if (X.es) X.es.close();
+    const es = new EventSource(`${API}/renders/${id}/events`);
+    X.es = es;
+    const on = (ev) => {
+      X.render = JSON.parse(ev.data);
+      if (["succeeded", "failed", "cancelled"].includes(X.render.status)) {
+        es.close(); X.es = null;
+        if (X.render.status === "failed") showExportErrors(X.render.error);
+        if (X.render.status === "succeeded") toast(t("Final video ready", "最終影片已完成"));
+      }
+      renderExport(); renderCta();
+    };
+    es.addEventListener("JOB_UPDATE", on);
+    es.addEventListener("JOB_DONE", on);
+  }
+  async function cancelRender() {
+    if (!X.render) return;
+    try { X.render = await api("POST", `/renders/${X.render.id}/cancel`); } catch (e) { /* ignore */ }
+    if (X.es) { X.es.close(); X.es = null; }
+    renderExport(); renderCta();
   }
 
   function halfLabel(c, long) {
@@ -453,6 +566,9 @@
     b.disabled = false; b.classList.remove("stop"); b.title = "";
     if (R.phase === "running") { b.textContent = t("Stop", "停止"); b.classList.add("stop"); }
     else if (R.phase === "ready") b.textContent = t(`Run · make ${clipsN(R.request.display.expected_clip_count)}`, `執行 · 產生 ${clipsN(R.request.display.expected_clip_count)}`);
+    else if (R.phase === "done" && X.render && (X.render.status === "running" || X.render.status === "queued")) {
+      b.textContent = t("Exporting…", "輸出中…"); b.disabled = true; b.title = t("Wait for the export or cancel it above", "請等待輸出完成，或在上方取消");
+    }
     else if (R.phase === "done") {
       const secs = R.clips.reduce((sum, c) => sum + (c.b - c.a), 0);
       b.textContent = t(`Export final video · ${clipsN(R.clips.length)} · ${fmtTime(secs)}`, `輸出最終影片 · ${clipsN(R.clips.length)} · ${fmtTime(secs)}`);
@@ -473,17 +589,12 @@
   }
   function renderAll() {
     renderSetup(); renderPlays(); renderCommands(); renderRun(); renderEdit(); renderCta(); renderSteps();
-    if (!$("#s-export").hidden) refreshExport();
-  }
-  function refreshExport() {
-    if (!R.clips.length) { $("#s-export").hidden = true; return; }
-    const project = buildProject(), secs = R.clips.reduce((sum, c) => sum + (c.b - c.a), 0);
-    $("#exportSum").textContent = t(`${clipsN(project.segments.length)} joined in list order · about ${fmtTime(secs)} · ${project.output}`, `${clipsN(project.segments.length)}依清單順序合併 · 約 ${fmtTime(secs)} · ${project.output}`);
-    $("#exportJson").innerHTML = hlJson(JSON.stringify(project, null, 2));
+    renderExport();
   }
   function changed() {
-    if (R.preview && R.phase !== "running") { R.stale = true; if (R.phase === "ready") R.phase = "setup"; }
-    persist(); renderPlays(); renderCommands(); renderRun(); renderCta(); renderSteps();
+    // Any new choice after generating or running means the next step is generating again.
+    if (R.preview && R.phase !== "running") { R.stale = true; if (R.phase === "ready" || R.phase === "done") R.phase = "setup"; }
+    persist(); renderPlays(); renderCommands(); renderRun(); renderEdit(); renderCta(); renderSteps();
   }
 
   // ------------------------------------------------------------------ actions
@@ -551,7 +662,7 @@
       if (["succeeded", "failed", "cancelled"].includes(R.job.status)) {
         es.close(); R.es = null;
         R.phase = R.job.status === "succeeded" ? "done" : "setup";
-        if (R.job.status === "succeeded") { loadClips(R.job); toast(t(`${clipsN(R.clips.length)} ready to edit`, `${clipsN(R.clips.length)}可以剪輯了`)); }
+        if (R.job.status === "succeeded") { loadClips(R.job); enrichClips(R.job); toast(t(`${clipsN(R.clips.length)} ready to edit`, `${clipsN(R.clips.length)}可以剪輯了`)); }
         if (R.job.status === "failed") R.phase = "ready";
         renderAll();
         if (R.job.status === "succeeded") setTimeout(() => document.getElementById("s-edit").scrollIntoView({ behavior: "smooth", block: "start" }), 400);
@@ -582,7 +693,16 @@
       S.videoPath = b.dataset.video;
       // Half-inning recordings are named like ..._bottom2nd.mp4 / ..._top6th.mp4
       const m = S.videoPath.match(/_(top|bottom)(\d+)(?:st|nd|rd|th)\.[a-z0-9]+$/i);
-      if (m) { S.mode = "half"; S.halfSide = m[1].toLowerCase(); S.halfInning = Number(m[2]); S.autoAnchor = true; toast(t(`Set to the ${m[1].toLowerCase()} of inning ${m[2]} from the file name.`, `已依檔名設定為第 ${m[2]} 局${m[1].toLowerCase() === "top" ? "上" : "下"}。`)); }
+      if (m) {
+        S.mode = "half"; S.halfSide = m[1].toLowerCase(); S.halfInning = Number(m[2]); S.autoAnchor = true;
+        let msg = t(`Set to the ${S.halfSide} of inning ${m[2]} from the file name.`, `已依檔名設定為第 ${m[2]} 局${S.halfSide === "top" ? "上" : "下"}。`);
+        // Only one team bats in a half-inning; a team filter for the other side would match nothing.
+        if (S.teams.size && R.game && !matches().length) {
+          S.teams.clear();
+          msg += t(" Team filter cleared: the other team doesn't bat in this half.", " 已清除隊伍篩選：這個半局只有另一隊打擊。");
+        }
+        toast(msg);
+      }
       renderSetup(); changed();
     }
     else if (b.id === "loadGame") loadGame();
@@ -612,7 +732,13 @@
     }
     else if (b.id === "stopBtn") stop();
     else if (b.closest("#cmdsToggle")) { S.showCmds = !S.showCmds; persist(); renderCommands(); }
-    else if (b.id === "copyProject") copyText(JSON.stringify(buildProject(), null, 2));
+    else if (b.id === "copyProject") copyText(JSON.stringify(X.lastProject || buildProject(), null, 2));
+    else if (b.id === "exportCancel") cancelRender();
+    else if (b.id === "exportFromEdit") exportVideo();
+    else if (b.id === "exportOverwrite") exportVideo(true);
+    else if (b.id === "exportDetailsBtn") { const d = $("#exportDetails"); d.hidden = !d.hidden; }
+    else if (b.closest("#projectToggle")) { const pt = $("#projectToggle"), open = pt.getAttribute("aria-expanded") !== "true"; pt.setAttribute("aria-expanded", String(open)); $("#projectBody").hidden = !open; }
+    else if (b.dataset.chapter !== undefined) { const v = $("#reelPlayer"); v.currentTime = Number(b.dataset.chapter); v.play().catch(() => {}); }
     else if (b.id === "playTrim") { const v = player(), c = R.clips[R.sel]; if (c && !v.hidden) { v.currentTime = c.a; v.play().catch(() => {}); } }
     else if (b.id === "retryBtn") run(true);
     else if (b.id === "detailsBtn") { const d = $("#runErrorDetails"); d.hidden = !d.hidden; }
@@ -699,7 +825,7 @@
         const job = await api("GET", `/jobs/${S.lastJobId}`);
         R.job = job;
         if (job.status === "running" || job.status === "queued") { R.phase = "running"; watch(job.id); }
-        else if (job.status === "succeeded") { R.phase = "done"; loadClips(job); }
+        else if (job.status === "succeeded") { R.phase = "done"; loadClips(job); enrichClips(job); }
         renderAll();
       } catch (e) { S.lastJobId = null; persist(); }
     }
