@@ -116,18 +116,28 @@
     return parts;
   }
 
+  // One folder (and one play list) per game + video, not per filter: clips cut for one set of
+  // filters are reused when the filters change, instead of being cut again into a new folder.
+  function videoKey() {
+    const path = S.videoPath || "";
+    const stem = path.split("/").pop().replace(/\.[^.]+$/, "");
+    let key = slug(stem) || "video";
+    if (/[^\x00-\x7F]/.test(stem)) {  // non-ASCII names lose letters in slug(); add a short hash to stay unique
+      let h = 0;
+      for (const ch of path) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+      key += "_" + h.toString(36).slice(0, 6);
+    }
+    return key;
+  }
+  const videoName = (path) => (path || "").split("/").pop();
+  const scopeText = () => (S.mode === "full" ? t("full game", "整場比賽") : t(`inning ${S.halfInning} ${S.halfSide}`, `第 ${S.halfInning} 局${S.halfSide === "top" ? "上" : "下"}`));
   function folderName() {
-    const bits = [String(S.gamePk)];
-    S.teams.forEach((side) => { const tm = teamOf(side); bits.push(slug(tm ? tm.name.split(" ").slice(-1)[0] : side)); });
-    [...S.batters, ...S.pitchers].forEach((p) => bits.push(slug(p.split(" ").slice(-1)[0])));
-    if (S.types.size && S.types.size <= 3) S.types.forEach((x) => bits.push(slug(x).replace(/_/g, "")));
-    else if (S.types.size) bits.push(`${S.types.size}types`);
-    return `sport_hightlight/dataset/${bits.join("_")}`;
+    return `sport_hightlight/dataset/${S.gamePk}_${videoKey()}`;
   }
 
   // ------------------------------------------------------------------ request (JobCreateRequest)
   function buildRequest(requestId) {
-    const csv = `sport_hightlight/csv_data/${S.gamePk}_ground_truth.csv`;
+    const csv = `sport_hightlight/csv_data/${S.gamePk}_${videoKey()}_ground_truth.csv`;
     const a1 = { game_pk: Number(S.gamePk), video: S.videoPath };
     if (S.mode === "full") a1.game_offset_seconds = Number(S.offset);
     else {
@@ -331,7 +341,7 @@
         if (running.id === "cut_clips" && running.progress) text = t(`Cutting clip ${running.progress.done} of ${running.progress.total}`, `正在剪第 ${running.progress.done} / ${running.progress.total} 段`);
         else if (running.id === "blur_flags" && running.progress) text = t(`Blurring flags · ${running.progress.done} of ${running.progress.total}`, `正在模糊旗幟 · ${running.progress.done} / ${running.progress.total}`);
         else text = (STEP_TITLES[running.id] || (() => running.id))() + "…";
-      } else if (job.status === "succeeded") { text = t(`Done. ${clipsN(job.outputs.clips.length)} made.`, `完成，已產生 ${clipsN(job.outputs.clips.length)}。`) + (job.demo ? t(" (demo: no files were written)", "（示範：沒有寫入檔案）") : ""); pct = 100; }
+      } else if (job.status === "succeeded") { const reusedN = job.outputs.reused_clips || 0; text = t(`Done. ${clipsN(job.outputs.clips.length)} ready${reusedN ? ` (${reusedN} reused from earlier runs)` : ""}.`, `完成，共 ${clipsN(job.outputs.clips.length)}${reusedN ? `（${reusedN} 段沿用之前的片段）` : ""}。`) + (job.demo ? t(" (demo: no files were written)", "（示範：沒有寫入檔案）") : ""); pct = 100; }
       else if (job.status === "cancelled") { const k = job.outputs.cancelled_after_clips || 0; text = t(`Stopped. ${clipsN(k)} finished before you stopped.`, `已停止，停止前完成了 ${clipsN(k)}。`); }
       else if (job.status === "failed") text = t("The run stopped with a problem.", "執行時發生問題而停止。");
     }
