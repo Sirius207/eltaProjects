@@ -1,0 +1,628 @@
+openapi: 3.0.3
+info:
+  title: highlight_editor 資料格式
+  version: 1.0.0
+  description: |
+    精華剪輯後台（`highlight_editor`）與 UI 之間的 JSON 資料格式。
+
+    **本文件只描述資料格式，沒有 HTTP 端點，因此 `paths` 是空的。** 後台提供兩種呼叫方式：
+
+    - 子程序呼叫 CLI：`python -m highlight_editor <指令>`，從 stdout 讀取一個 JSON 物件。
+    - Python：`from highlight_editor import list_clips, validate_project, render_project`，回傳與 CLI stdout 相同結構的 dict。
+
+    | 指令 | 輸入 | 成功時 stdout | 失敗時 stdout |
+    |---|---|---|---|
+    | `list --manifest <csv> [<csv> ...]` | `manifest.csv` | `ListClipsResult` | `ErrorResult` |
+    | `validate <project.json 或 ->` | `Project` | `ValidateResult` | `ErrorResult` |
+    | `render <project.json 或 -> [--overwrite]` | `Project` | `RenderResult` | `ErrorResult` |
+
+    `-` 代表從 stdin 讀取專案 JSON。三個指令都接受 `--base-dir DIR`。
+
+    ## 慣例
+
+    - **影格**：0 起算的半開區間 `[start_frame, end_frame)`，長度為 `end_frame − start_frame`，以該片段自己的 fps 計。例如 600 格的片段，整段是 `0`–`600`；前後兩段可以用同一個數字接起來，如 `0`–`300` 與 `300`–`600`，不重複也不漏格。
+    - **路徑**：相對路徑以 `--base-dir`（預設為目前目錄）為基準。`manifest.csv` 的 `clip_path` 是相對於 repo 根目錄。結果中的路徑會照輸入原樣帶回。
+    - **秒數**：取到小數第 3 位。
+    - **進度**：`render` 執行時，stderr 每行輸出一個 `ProgressEvent`（JSON Lines）；stdout 只有最後的結果。
+    - **exit code**：`0` 成功；`1` 輸入或驗證錯誤；`2` ffmpeg 或檔案系統錯誤。
+    - **相容性**：輸入中不認得的欄位會被忽略，UI 可以夾帶自己的資料。後台日後可能在輸出中新增欄位，UI 應忽略不認得的欄位。
+    - 以 `ok` 判斷成功（`true`）或失敗（`false`）。
+paths: {}
+components:
+  schemas:
+    Project:
+      type: object
+      description: 專案檔，由 UI 產生，交給 `validate` 或 `render`。
+      required: [output, segments]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+          default: 1
+          description: 格式版本。目前只有 1。
+        output:
+          type: string
+          minLength: 1
+          pattern: '\.[mM][pP]4$'
+          description: >-
+            輸出檔路徑，副檔名必須是 .mp4，且不可與任何 segment 的 clip 指向同一個檔案。
+            render 時若上層目錄不存在會自動建立。
+        overwrite:
+          type: boolean
+          default: false
+          description: 輸出檔已存在時是否覆寫。為 false 時會回傳 output_exists 錯誤。CLI 的 --overwrite 會強制為 true。
+        settings:
+          $ref: '#/components/schemas/OutputSettings'
+        segments:
+          type: array
+          minItems: 1
+          description: 要合併的段落。陣列順序就是合併順序。同一個 clip 可以重複出現；只有一段時就是簡易剪輯。
+          items:
+            $ref: '#/components/schemas/Segment'
+      example:
+        version: 1
+        output: out/reels/823734_top_plays.mp4
+        overwrite: false
+        settings:
+          width: null
+          height: null
+          fps: null
+          crf: 20
+          preset: fast
+        segments:
+          - id: hr
+            clip: sport_hightlight/dataset/full_game/positive/event_0015_2bottom_Home_Run.mp4
+            start_frame: 120
+            end_frame: 480
+          - id: k
+            clip: sport_hightlight/dataset/full_game/positive/event_0003_1top_Strikeout.mp4
+            start_frame: 180
+
+    OutputSettings:
+      type: object
+      description: 輸出規格，全部選填。寬、高、fps 為 null 時取第一段的值。
+      properties:
+        width:
+          type: integer
+          nullable: true
+          minimum: 2
+          multipleOf: 2
+          default: null
+          description: 輸出寬度（像素），必須是正偶數。null 表示取第一段；第一段是奇數時會向下修成偶數。
+        height:
+          type: integer
+          nullable: true
+          minimum: 2
+          multipleOf: 2
+          default: null
+          description: 輸出高度（像素），規則同 width。
+        fps:
+          nullable: true
+          default: null
+          description: >-
+            輸出 fps。null 表示取第一段。可以是正數（30、29.97），
+            或分數字串（"30"、"29.97"、"30000/1001"）。
+          oneOf:
+            - type: number
+              minimum: 0
+              exclusiveMinimum: true
+            - type: string
+              pattern: '^\d+(\.\d+)?(/\d+)?$'
+        crf:
+          type: integer
+          minimum: 0
+          maximum: 51
+          default: 20
+          description: x264 品質參數，越小畫質越好、檔案越大。
+        preset:
+          type: string
+          enum: [ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow]
+          default: fast
+          description: x264 編碼速度預設。
+
+    Segment:
+      type: object
+      description: 一個選取段落：從 clip 取出影格 [start_frame, end_frame)。
+      required: [clip]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: >-
+            UI 自己的識別碼，必須唯一，結果與錯誤會原樣帶回。
+            省略時依位置填 "1"、"2"…；若與使用者自填的 id 衝突會回傳 invalid_value。
+        clip:
+          type: string
+          minLength: 1
+          description: 片段檔案路徑，通常直接使用 ListClipsResult 中的 clip。
+        start_frame:
+          type: integer
+          minimum: 0
+          default: 0
+          description: 起始影格（包含），0 起算。
+        end_frame:
+          type: integer
+          nullable: true
+          minimum: 1
+          default: null
+          description: 結束影格（不包含）。null 或省略表示到片段最後一格（frame_count）。必須滿足 start_frame < end_frame ≤ frame_count。
+
+    ListClipsResult:
+      type: object
+      description: list 指令成功時的輸出。
+      required: [ok, clips]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        clips:
+          type: array
+          description: 依 manifest 的列順序；給多個 manifest 時依參數順序串接。
+          items:
+            $ref: '#/components/schemas/Clip'
+      example:
+        ok: true
+        clips:
+          - clip: sport_hightlight/dataset/full_game/positive/event_0015_2bottom_Home_Run.mp4
+            manifest: sport_hightlight/dataset/full_game/manifest.csv
+            label: positive
+            game_pk: "823734"
+            inning: "2"
+            half: bottom
+            event_type: Home Run
+            description: Joey Ortiz homers (9) on a fly ball to center field. Christian Yelich scores.
+            is_official_highlight: true
+            official_highlight_title: Joey Ortiz's two-run home run (9)
+            duration: 20.0
+            exists: true
+            fps: 30000/1001
+            frame_count: 600
+            width: 1280
+            height: 720
+            has_audio: true
+          - clip: sport_hightlight/dataset/full_game/positive/event_0003_1top_Strikeout.mp4
+            manifest: sport_hightlight/dataset/full_game/manifest.csv
+            label: positive
+            game_pk: "823734"
+            inning: "1"
+            half: top
+            event_type: Strikeout
+            description: Sal Stewart strikes out swinging.
+            is_official_highlight: true
+            official_highlight_title: Robert Gasser fans Sal Stewart
+            duration: 20.0
+            exists: false
+            fps: null
+            frame_count: null
+            width: null
+            height: null
+            has_audio: null
+
+    Clip:
+      type: object
+      description: >-
+        manifest.csv 中的一個可選片段。manifest 缺少的欄位會是空字串。
+        檔案不存在（exists 為 false）時，探測欄位（fps、frame_count、width、height、has_audio）都是 null。
+      required: [clip, manifest, label, game_pk, inning, half, event_type, description,
+                 is_official_highlight, official_highlight_title, duration,
+                 exists, fps, frame_count, width, height, has_audio]
+      properties:
+        clip:
+          type: string
+          description: 片段路徑，可直接放進 Segment.clip。
+        manifest:
+          type: string
+          description: 這一列來自哪個 manifest。
+        label:
+          type: string
+          description: positive（MLB 官方精華）或 hard_negative（其他事件）。
+          example: positive
+        game_pk:
+          type: string
+          description: MLB 比賽代碼。舊的 manifest 沒有這個欄位時為空字串。
+        inning:
+          type: string
+          description: 局數。
+        half:
+          type: string
+          description: top 或 bottom。
+        event_type:
+          type: string
+          description: 事件類型，例如 Home Run、Strikeout。
+        description:
+          type: string
+          description: MLB API 的事件描述。
+        is_official_highlight:
+          type: boolean
+          description: 是否配對到 MLB 官方精華。
+        official_highlight_title:
+          type: string
+          description: 官方精華標題；沒有配對時為空字串。
+        duration:
+          type: number
+          nullable: true
+          description: 片段長度（秒），來自 manifest 的 clip_duration_seconds；無法解析時為 null。
+        exists:
+          type: boolean
+          description: 片段檔案是否存在。
+        fps:
+          type: string
+          nullable: true
+          description: 片段 fps，以分數字串表示，例如 30000/1001。
+        frame_count:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: 片段總影格數；可選範圍是 0 到 frame_count。
+        width:
+          type: integer
+          nullable: true
+          description: 寬度（像素）。
+        height:
+          type: integer
+          nullable: true
+          description: 高度（像素）。
+        has_audio:
+          type: boolean
+          nullable: true
+          description: 是否有音軌。沒有音軌的片段在合併時會補上靜音。
+
+    ValidateResult:
+      type: object
+      description: validate 指令成功時的輸出。會補上實際的 end_frame 與輸出規格，但不編碼。
+      required: [ok, output, settings, estimated_duration, segments]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        output:
+          type: string
+        settings:
+          $ref: '#/components/schemas/ResolvedSettings'
+        estimated_duration:
+          type: number
+          minimum: 0
+          description: 預估輸出長度（秒），等於各段 (end_frame − start_frame) / 片段 fps 的總和。
+        segments:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidatedSegment'
+      example:
+        ok: true
+        output: out/reels/823734_top_plays.mp4
+        settings:
+          width: 1280
+          height: 720
+          fps: 30000/1001
+          crf: 20
+          preset: fast
+        estimated_duration: 26.026
+        segments:
+          - id: hr
+            clip: sport_hightlight/dataset/full_game/positive/event_0015_2bottom_Home_Run.mp4
+            start_frame: 120
+            end_frame: 480
+            fps: 30000/1001
+            frame_count: 600
+          - id: k
+            clip: sport_hightlight/dataset/full_game/positive/event_0003_1top_Strikeout.mp4
+            start_frame: 180
+            end_frame: 600
+            fps: 30000/1001
+            frame_count: 600
+
+    ResolvedSettings:
+      type: object
+      description: 決定後的輸出規格。
+      required: [width, height, fps, crf, preset]
+      properties:
+        width:
+          type: integer
+          minimum: 2
+          multipleOf: 2
+        height:
+          type: integer
+          minimum: 2
+          multipleOf: 2
+        fps:
+          type: string
+          description: 一律以字串表示。取自片段時是分數（30000/1001）；使用者指定 30 時是 "30"。
+        crf:
+          type: integer
+          minimum: 0
+          maximum: 51
+        preset:
+          type: string
+          enum: [ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow]
+
+    ValidatedSegment:
+      type: object
+      required: [id, clip, start_frame, end_frame, fps, frame_count]
+      properties:
+        id:
+          type: string
+        clip:
+          type: string
+        start_frame:
+          type: integer
+          minimum: 0
+        end_frame:
+          type: integer
+          minimum: 1
+          description: 已補上實際值，不會是 null。
+        fps:
+          type: string
+          description: 這個片段的 fps。
+        frame_count:
+          type: integer
+          minimum: 1
+          description: 這個片段的總影格數。
+
+    RenderResult:
+      type: object
+      description: render 指令成功時的輸出。
+      required: [ok, output, settings, duration, frame_count, segments]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        output:
+          type: string
+        settings:
+          $ref: '#/components/schemas/ResolvedSettings'
+        duration:
+          type: number
+          minimum: 0
+          description: 輸出長度（秒），等於 frame_count / 輸出 fps。
+        frame_count:
+          type: integer
+          minimum: 1
+          description: 輸出總影格數（以輸出 fps 計）。
+        segments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RenderedSegment'
+      example:
+        ok: true
+        output: out/reels/823734_top_plays.mp4
+        settings:
+          width: 1280
+          height: 720
+          fps: 30000/1001
+          crf: 20
+          preset: fast
+        duration: 26.026
+        frame_count: 780
+        segments:
+          - id: hr
+            clip: sport_hightlight/dataset/full_game/positive/event_0015_2bottom_Home_Run.mp4
+            start_frame: 120
+            end_frame: 480
+            output_start_frame: 0
+            output_end_frame: 360
+            output_start: 0.0
+            output_end: 12.012
+          - id: k
+            clip: sport_hightlight/dataset/full_game/positive/event_0003_1top_Strikeout.mp4
+            start_frame: 180
+            end_frame: 600
+            output_start_frame: 360
+            output_end_frame: 780
+            output_start: 12.012
+            output_end: 26.026
+
+    RenderedSegment:
+      type: object
+      description: >-
+        一段在合併後影片中的位置，可用來在時間軸上畫章節標記。
+        output_*_frame 以輸出 fps 計，同樣是半開區間，前後段首尾相接；數值來自實際編碼結果。
+        片段 fps 與輸出 fps 相同時，output_end_frame − output_start_frame 剛好等於 end_frame − start_frame。
+      required: [id, clip, start_frame, end_frame, output_start_frame, output_end_frame, output_start, output_end]
+      properties:
+        id:
+          type: string
+        clip:
+          type: string
+        start_frame:
+          type: integer
+          minimum: 0
+          description: 原片段中的起始影格（包含）。
+        end_frame:
+          type: integer
+          minimum: 1
+          description: 原片段中的結束影格（不包含）。
+        output_start_frame:
+          type: integer
+          minimum: 0
+          description: 在輸出影片中的起始影格（包含）。
+        output_end_frame:
+          type: integer
+          minimum: 1
+          description: 在輸出影片中的結束影格（不包含）。
+        output_start:
+          type: number
+          minimum: 0
+          description: 在輸出影片中的起始時間（秒）。
+        output_end:
+          type: number
+          minimum: 0
+          description: 在輸出影片中的結束時間（秒）。
+
+    ErrorResult:
+      type: object
+      description: 任何指令失敗時的輸出。驗證錯誤會一次全部回報。
+      required: [ok, errors]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        errors:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Error'
+      example:
+        ok: false
+        errors:
+          - code: out_of_range
+            segment_id: k
+            field: end_frame
+            message: end_frame（700）超過片段影格數 600
+          - code: clip_not_found
+            segment_id: hr
+            field: clip
+            message: 找不到片段：sport_hightlight/dataset/full_game/positive/event_0015_2bottom_Home_Run.mp4
+
+    Error:
+      type: object
+      required: [code, segment_id, field, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        segment_id:
+          type: string
+          nullable: true
+          description: 出錯的段落 id；專案層級的錯誤為 null。
+        field:
+          type: string
+          nullable: true
+          description: 出錯的欄位名稱，例如 end_frame、output、settings.width；不適用時為 null。
+        message:
+          type: string
+          description: 給人看的錯誤訊息（繁體中文）。
+        detail:
+          type: string
+          description: 只在 ffmpeg_failed 時出現，內容是 ffmpeg stderr 的最後 20 行。
+
+    ErrorCode:
+      type: string
+      description: |
+        機器可讀的錯誤代碼。
+
+        | code | 何時 | exit code |
+        |---|---|---|
+        | `invalid_json` | 專案檔不是合法的 JSON，或頂層不是物件 | 1 |
+        | `missing_field` | 缺少必填欄位 | 1 |
+        | `invalid_value` | 型別或值不合法，例如負數、奇數寬度、不支援的 preset、重複 id、副檔名不是 .mp4、output 與 clip 相同 | 1 |
+        | `out_of_range` | 影格範圍不符合 0 ≤ start_frame < end_frame ≤ frame_count | 1 |
+        | `clip_not_found` | 片段檔案不存在 | 1 |
+        | `invalid_media` | ffprobe 讀不到檔案，或檔案沒有視訊串流 | 1 |
+        | `output_exists` | 輸出檔已存在，而且沒有允許覆寫 | 1 |
+        | `manifest_not_found` | list 指定的 manifest 不存在 | 1 |
+        | `ffmpeg_not_found` | PATH 上找不到 ffmpeg 或 ffprobe | 2 |
+        | `ffmpeg_failed` | ffmpeg 執行失敗，會附上 detail | 2 |
+        | `io_error` | 建立目錄、搬移檔案等檔案系統錯誤 | 2 |
+      enum:
+        - invalid_json
+        - missing_field
+        - invalid_value
+        - out_of_range
+        - clip_not_found
+        - invalid_media
+        - output_exists
+        - manifest_not_found
+        - ffmpeg_not_found
+        - ffmpeg_failed
+        - io_error
+
+    ProgressEvent:
+      description: render 執行時，stderr 每行一個事件（JSON Lines）。Python API 則以 on_progress(event) 回呼傳入。
+      oneOf:
+        - $ref: '#/components/schemas/SegmentStartEvent'
+        - $ref: '#/components/schemas/SegmentDoneEvent'
+        - $ref: '#/components/schemas/ConcatStartEvent'
+        - $ref: '#/components/schemas/DoneEvent'
+      discriminator:
+        propertyName: event
+        mapping:
+          segment_start: '#/components/schemas/SegmentStartEvent'
+          segment_done: '#/components/schemas/SegmentDoneEvent'
+          concat_start: '#/components/schemas/ConcatStartEvent'
+          done: '#/components/schemas/DoneEvent'
+
+    SegmentStartEvent:
+      type: object
+      description: 開始處理第 index 段（index 從 1 起算）。
+      required: [event, index, total, segment_id]
+      properties:
+        event:
+          type: string
+          enum: [segment_start]
+        index:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 1
+        segment_id:
+          type: string
+      example:
+        event: segment_start
+        index: 1
+        total: 2
+        segment_id: hr
+
+    SegmentDoneEvent:
+      type: object
+      description: 第 index 段處理完成。進度百分比可用 index / total 計算。
+      required: [event, index, total, segment_id]
+      properties:
+        event:
+          type: string
+          enum: [segment_done]
+        index:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 1
+        segment_id:
+          type: string
+      example:
+        event: segment_done
+        index: 1
+        total: 2
+        segment_id: hr
+
+    ConcatStartEvent:
+      type: object
+      description: 所有段落處理完成，開始串接。
+      required: [event]
+      properties:
+        event:
+          type: string
+          enum: [concat_start]
+      example:
+        event: concat_start
+
+    DoneEvent:
+      type: object
+      description: 輸出檔已完成。最後結果仍以 stdout 的 RenderResult 為準。
+      required: [event, output]
+      properties:
+        event:
+          type: string
+          enum: [done]
+        output:
+          type: string
+      example:
+        event: done
+        output: out/reels/823734_top_plays.mp4
+
+    ListClipsResponse:
+      description: list 指令 stdout 的內容。
+      oneOf:
+        - $ref: '#/components/schemas/ListClipsResult'
+        - $ref: '#/components/schemas/ErrorResult'
+
+    ValidateResponse:
+      description: validate 指令 stdout 的內容。
+      oneOf:
+        - $ref: '#/components/schemas/ValidateResult'
+        - $ref: '#/components/schemas/ErrorResult'
+
+    RenderResponse:
+      description: render 指令 stdout 的內容。
+      oneOf:
+        - $ref: '#/components/schemas/RenderResult'
+        - $ref: '#/components/schemas/ErrorResult'

@@ -4,17 +4,29 @@
 import argparse
 import csv
 import json
+import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 
 TIME_FIELDS: Tuple[str, ...] = (
     "audio_calibrated_video_seconds",
     "predicted_video_seconds",
 )
+
+X264_PRESETS: Tuple[str, ...] = (
+    "ultrafast", "superfast", "veryfast", "faster", "fast",
+    "medium", "slow", "slower", "veryslow",
+)
+
+
+def default_jobs() -> int:
+    # libx264 本身已用多執行緒，每 4 個邏輯核心配 1 個 ffmpeg 就足以吃滿 CPU
+    return max(1, min(8, (os.cpu_count() or 4) // 4))
 
 
 def parse_bool(value: str) -> bool:
@@ -138,36 +150,72 @@ def extract_clip(
     output_path: Path,
     start_seconds: float,
     duration_seconds: float,
+    preset: str,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    run_command([
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-ss",
-        f"{start_seconds:.3f}",
-        "-i",
-        str(video_path),
-        "-t",
-        f"{duration_seconds:.3f}",
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a:0?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "20",
-        "-c:a",
-        "aac",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ])
+    # 先寫到暫存檔，成功才改名；中斷或失敗時不會留下會被當成已完成而略過的殘缺短片
+    temp_path = output_path.with_name(f"{output_path.stem}.part{output_path.suffix}")
+    try:
+        run_command([
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{start_seconds:.3f}",
+            "-i",
+            str(video_path),
+            "-t",
+            f"{duration_seconds:.3f}",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            "20",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(temp_path),
+        ])
+        temp_path.replace(output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def extract_clips(
+    video_path: Path,
+    clips: Sequence[Tuple[Path, float, float]],
+    preset: str,
+    jobs: int,
+    on_done: Optional[Callable[[Path], None]] = None,
+) -> None:
+    """平行擷取 (輸出路徑, 起點秒數, 長度秒數)；任一失敗即取消尚未開始的工作。
+
+    on_done 在主執行緒中、每完成一個短片就呼叫一次（完成順序不一定是輸入順序）。
+    """
+    if not clips:
+        return
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        futures = {
+            executor.submit(extract_clip, video_path, path, start, duration, preset): path
+            for path, start, duration in clips
+        }
+        try:
+            for future in as_completed(futures):
+                future.result()
+                if on_done is not None:
+                    on_done(futures[future])
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -189,6 +237,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="允許覆寫已存在的短片",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=default_jobs(),
+        help="同時執行的 ffmpeg 數量；預設為邏輯核心數 / 4，介於 1 到 8（本機為 %(default)s）",
+    )
+    parser.add_argument(
+        "--preset",
+        choices=X264_PRESETS,
+        default="veryfast",
+        help="libx264 編碼速度；越快檔案越大（預設 veryfast）",
+    )
     filters = parser.add_argument_group("篩選（可組合，不同條件需同時符合）")
     filters.add_argument("--event-types", nargs="+", metavar="TYPE", help="只保留這些 event_type，例如 Strikeout \"Home Run\"")
     filters.add_argument("--batting-team", nargs="+", choices=TEAM_SIDES, help="打擊方：away（上半局）或 home（下半局）")
@@ -201,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--progress-json",
         action="store_true",
-        help="每處理一個事件就在 stderr 輸出一行 JSON 進度（供後端讀取）",
+        help="每完成一個事件就在 stderr 輸出一行 JSON 進度（供後端讀取）",
     )
     return parser
 
@@ -209,6 +269,8 @@ def build_parser() -> argparse.ArgumentParser:
 def make_clips(args: argparse.Namespace) -> int:
     if args.pre_seconds < 0 or args.post_seconds < 0:
         raise ValueError("--pre-seconds 和 --post-seconds 不可小於 0")
+    if args.jobs < 1:
+        raise ValueError("--jobs 至少為 1")
     if not args.video.is_file():
         raise FileNotFoundError(f"找不到影片：{args.video}")
     if not args.ground_truth.is_file():
@@ -227,16 +289,23 @@ def make_clips(args: argparse.Namespace) -> int:
     selected = filter_rows(rows, args)
     progress = bool(getattr(args, "progress_json", False))
     total = len(selected)
+    finished = 0  # clips done or skipped, in completion order
     emit_progress(progress, event="clips_start", total=total)
 
+    def report(event: str, clip: Optional[Path] = None) -> None:
+        nonlocal finished
+        finished += 1
+        extra = {"clip": str(clip)} if clip is not None else {}
+        emit_progress(progress, event=event, index=finished, total=total, **extra)
+
     manifest_rows: List[Dict[str, str]] = []
+    pending: List[Tuple[Path, float, float]] = []
     skipped = 0
-    created = 0
-    for index, (row_number, row) in enumerate(selected, start=1):
+    for row_number, row in selected:
         event_seconds, time_source = parse_seconds(row)
         if event_seconds is None:
             skipped += 1
-            emit_progress(progress, event="clip_skipped", index=index, total=total)
+            report("clip_skipped")
             continue
 
         requested_start = event_seconds - args.pre_seconds
@@ -246,7 +315,7 @@ def make_clips(args: argparse.Namespace) -> int:
         clip_duration = clip_end - clip_start
         if clip_duration <= 0:
             skipped += 1
-            emit_progress(progress, event="clip_skipped", index=index, total=total)
+            report("clip_skipped")
             continue
 
         is_official = parse_bool(row.get("is_official_highlight", ""))
@@ -258,8 +327,9 @@ def make_clips(args: argparse.Namespace) -> int:
         clip_path = output_dir / label / clip_name
 
         if not clip_path.exists() or args.overwrite:
-            extract_clip(args.video, clip_path, clip_start, clip_duration)
-            created += 1
+            pending.append((clip_path, clip_start, clip_duration))
+        else:
+            report("clip_done", clip_path)  # already cut earlier; kept as is
 
         manifest_rows.append({
             "clip_path": str(clip_path),
@@ -281,7 +351,11 @@ def make_clips(args: argparse.Namespace) -> int:
             "batter": row.get("batter", ""),
             "pitcher": row.get("pitcher", ""),
         })
-        emit_progress(progress, event="clip_done", index=index, total=total, clip=str(clip_path))
+
+    if pending:
+        print(f"擷取 {len(pending)} 個短片（--jobs {args.jobs}，--preset {args.preset}）...")
+    extract_clips(args.video, pending, args.preset, args.jobs, on_done=lambda path: report("clip_done", path))
+    created = len(pending)
 
     manifest_fields = list(manifest_rows[0].keys()) if manifest_rows else [
         "clip_path", "label", "game_pk", "source_video", "inning", "half", "event_type",
