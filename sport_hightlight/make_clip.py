@@ -22,10 +22,37 @@ X264_PRESETS: Tuple[str, ...] = (
     "medium", "slow", "slower", "veryslow",
 )
 
+ENCODERS: Tuple[str, ...] = ("libx264", "nvenc", "qsv")
+
 
 def default_jobs() -> int:
     # libx264 本身已用多執行緒，每 4 個邏輯核心配 1 個 ffmpeg 就足以吃滿 CPU
     return max(1, min(8, (os.cpu_count() or 4) // 4))
+
+
+def video_codec_args(encoder: str, preset: str) -> List[str]:
+    # 硬體編碼器的品質設定已調到與 libx264 veryfast CRF 20 的檔案大小、SSIM 相近。
+    # 解碼一律用 CPU：Intel 硬體解碼（-hwaccel qsv）會讓片段固定提早 4 格。
+    if encoder == "nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "hq",
+                "-rc", "vbr", "-cq", "26", "-b:v", "0"]
+    if encoder == "qsv":
+        return ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "22"]
+    return ["-c:v", "libx264", "-preset", preset, "-crf", "20"]
+
+
+def check_encoder(encoder: str, video_args: Sequence[str]) -> None:
+    """硬體編碼器先試編 1 格，沒有對應硬體時直接給出明確錯誤。"""
+    if encoder == "libx264":
+        return
+    try:
+        run_command([
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=size=320x240:rate=30",
+            "-frames:v", "1", *video_args, "-f", "null", "-",
+        ])
+    except RuntimeError as exc:
+        raise RuntimeError(f"這台電腦無法使用 --encoder {encoder}：{exc}") from exc
 
 
 def parse_bool(value: str) -> bool:
@@ -83,7 +110,7 @@ def extract_clip(
     output_path: Path,
     start_seconds: float,
     duration_seconds: float,
-    preset: str,
+    video_args: Sequence[str],
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # 先寫到暫存檔，成功才改名；中斷或失敗時不會留下會被當成已完成而略過的殘缺短片
@@ -105,12 +132,7 @@ def extract_clip(
             "0:v:0",
             "-map",
             "0:a:0?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            preset,
-            "-crf",
-            "20",
+            *video_args,
             "-c:a",
             "aac",
             "-movflags",
@@ -125,7 +147,7 @@ def extract_clip(
 def extract_clips(
     video_path: Path,
     clips: Sequence[Tuple[Path, float, float]],
-    preset: str,
+    video_args: Sequence[str],
     jobs: int,
 ) -> None:
     """平行擷取 (輸出路徑, 起點秒數, 長度秒數)；任一失敗即取消尚未開始的工作。"""
@@ -133,7 +155,7 @@ def extract_clips(
         return
     with ThreadPoolExecutor(max_workers=jobs) as executor:
         futures = [
-            executor.submit(extract_clip, video_path, path, start, duration, preset)
+            executor.submit(extract_clip, video_path, path, start, duration, video_args)
             for path, start, duration in clips
         ]
         try:
@@ -171,10 +193,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="同時執行的 ffmpeg 數量；預設為邏輯核心數 / 4，介於 1 到 8（本機為 %(default)s）",
     )
     parser.add_argument(
+        "--encoder",
+        choices=ENCODERS,
+        default="libx264",
+        help="影片編碼器：libx264（CPU，預設）、nvenc（NVIDIA 顯卡）、qsv（Intel 內顯）；"
+        "硬體編碼較快，檔案大小與畫質與 libx264 veryfast 相近",
+    )
+    parser.add_argument(
         "--preset",
         choices=X264_PRESETS,
         default="veryfast",
-        help="libx264 編碼速度；越快檔案越大（預設 veryfast）",
+        help="libx264 編碼速度，只對 --encoder libx264 有效；越快檔案越大（預設 veryfast）",
     )
     return parser
 
@@ -245,9 +274,14 @@ def make_clips(args: argparse.Namespace) -> int:
             "official_highlight_url": row.get("official_highlight_url", ""),
         })
 
+    video_args = video_codec_args(args.encoder, args.preset)
     if pending:
-        print(f"擷取 {len(pending)} 個短片（--jobs {args.jobs}，--preset {args.preset}）...")
-    extract_clips(args.video, pending, args.preset, args.jobs)
+        check_encoder(args.encoder, video_args)
+        settings = f"--encoder {args.encoder}，--jobs {args.jobs}"
+        if args.encoder == "libx264":
+            settings += f"，--preset {args.preset}"
+        print(f"擷取 {len(pending)} 個短片（{settings}）...")
+    extract_clips(args.video, pending, video_args, args.jobs)
     created = len(pending)
 
     manifest_fields = list(manifest_rows[0].keys()) if manifest_rows else [
