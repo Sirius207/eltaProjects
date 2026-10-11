@@ -201,7 +201,7 @@ python3 -m highlight_builder.server --real   # 強制實際執行
 - **示範模式**：沒有安裝 ffmpeg、或 `video/` 裡只有 Git LFS 佔位檔時會自動啟用。執行時走過相同步驟、回報進度，但不呼叫工具、不寫任何檔案，頁面上會標示「示範」。
 - **實際執行**：需要 `git lfs pull` 取得影片、安裝 ffmpeg，以及工具用的 Python 套件（`requests`、`opencv-python`、`numpy`）。後端會自動用專案的 `.venv` 執行工具；要用別的 Python 可設定 `HIGHLIGHT_BUILDER_PYTHON=/path/to/python`。
 - **API 規格**：`docs/api/highlight-builder.openapi.yaml`（OpenAPI 3.1）。後端拒絕未知的工具、未知的參數，以及超出專案資料夾的路徑，而且不透過 shell 執行。
-- **剪輯（US-8）**：目前是示範流程，按鈕可以操作，但不會修改影片；之後接上 `highlight_editor`。
+- **剪輯（US-8）**：目前是示範流程，按鈕可以操作，但不會修改影片；之後接上 `highlight_editor`，串接方式見 [docs/highlight-editor-integration.md](docs/highlight-editor-integration.md)。
 
 CLI 也可以直接使用：
 
