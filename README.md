@@ -144,6 +144,7 @@ python sport_hightlight/mlb_highlight_groundtruth.py \
 - `audio_calibrated_video_seconds`：音訊校準後的時間
 - `is_official_highlight`：是否配對到 MLB 官方精華
 - `official_highlight_title`、`official_highlight_duration`、`official_highlight_url`：官方精華資訊
+- `batter`、`pitcher`：打者與投手（新版才有；舊 CSV 沒有這兩欄）
 
 ## 產生短片資料集
 
@@ -159,6 +160,27 @@ python sport_hightlight/make_clip.py \
 需要系統安裝 `ffmpeg` 與 `ffprobe`。`positive` 是 MLB 官方精華事件，其餘事件放在 `hard_negative`；兩者與 `manifest.csv` 都位於輸出目錄。短片不進版控（見 `.gitignore`），只保留 `manifest.csv`。
 
 整場資料集（指令見「完整轉播模式」）：72 個 20 秒短片，約 1.3 GB，片段之間沒有重疊；依目前配對規則，`positive` 為 16 個、`hard_negative` 為 56 個。`manifest.csv` 除了標籤與時間，還記錄 `game_pk` 與 `source_video`，合併多場比賽時可追溯來源。已存在的短片預設不重新編碼，需要重切請加 `--overwrite`。
+
+### 篩選事件
+
+`make_clip.py` 可以只剪符合條件的事件；不同條件需同時符合，同一條件內的多個值是「任一符合」。片段檔名中的編號仍是 CSV 原本的列號，改變篩選不會讓檔名變動。
+
+| 參數 | 說明 |
+|---|---|
+| `--event-types Strikeout "Home Run"` | 只保留這些 `event_type` |
+| `--batting-team away` / `--pitching-team home` | 依打擊方或投球方篩選；客隊（away）在上半局打擊 |
+| `--batters NAME ...` / `--pitchers NAME ...` | 依打者或投手篩選，需要 CSV 有 `batter`、`pitcher` 欄位 |
+| `--innings 7 9` | 局數範圍 |
+| `--scoring-only`、`--official-only` | 只保留得分事件、只保留 MLB 官方精華 |
+| `--progress-json` | 每處理一個事件就在 stderr 輸出一行 JSON 進度，供後端讀取 |
+
+```bash
+python sport_hightlight/make_clip.py \
+  --ground-truth sport_hightlight/csv_data/full_game_ground_truth.csv \
+  --video video/eltaMax10_Reds_Brewers_0913.mp4 \
+  --out-dir sport_hightlight/dataset/823734_reds_strikeout_homerun \
+  --event-types Strikeout "Home Run" --batting-team away
+```
 
 ## 手動指定 anchor
 
