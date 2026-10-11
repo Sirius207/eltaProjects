@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "output": "out/reels/823734_top_plays.mp4",
+  "overwrite": false,
+  "settings": { "width": null, "height": null, "fps": null, "crf": 20, "preset": "fast" },
+  "segments": [
+    {
+      "id": "hr",
+      "clip": "sport_hightlight/dataset/full_game/positive/event_0015_2bottom_Home_Run.mp4",
+      "start_frame": 120,
+      "end_frame": 480
+    },
+    {
+      "id": "k",
+      "clip": "sport_hightlight/dataset/full_game/positive/event_0003_1top_Strikeout.mp4",
+      "start_frame": 180
+    }
+  ]
+}
