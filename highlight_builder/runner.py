@@ -188,6 +188,9 @@ def run_real(job: Job, emit: Emit) -> Dict[str, Any]:
                 clip["masked_path"] = out
                 emit({"event": "progress", "step_id": sid, "done": n, "total": len(source)})
         else:
+            out = step.get("args", {}).get("out")
+            if out:  # mlb_highlight_groundtruth.py doesn't create the folder for --out
+                (REPO_ROOT / out).parent.mkdir(parents=True, exist_ok=True)
             run_process(build_argv(step, py), sid, lambda line: None)
         emit({"event": "step_done", "step_id": sid})
     return outputs
