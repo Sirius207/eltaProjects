@@ -24,6 +24,7 @@
 | 轉場 | 不加，直接硬切接 |
 | 渲染方式 | 兩階段：先逐段正規化成 .mov 中間檔（H.264＋PCM；每段兩次 ffmpeg 呼叫，讓音訊精準對齊視訊），再用 concat demuxer 串接，音訊只編碼一次 AAC |
 | 程式位置 | 新目錄 `highlight_editor/`，不修改任何既有檔案 |
+| 給 UI 的格式文件 | `highlight_editor/openapi.yaml`（OpenAPI 3.0.3）。只描述資料格式（`components/schemas`），沒有 HTTP 端點，`paths` 為空 |
 
 ## 3. 不在範圍內
 
@@ -48,11 +49,13 @@ highlight_editor/
 ├── render.py            # 驗證＋探測＋兩階段渲染、進度回呼、結果組裝
 ├── catalog.py           # 讀 manifest.csv，列出可選片段
 ├── README.md            # 給 UI 同事的契約說明（繁體中文）
+├── openapi.yaml         # §5 的資料格式，以 OpenAPI 3.0.3 schema 表示（給 UI 同事用 Swagger 檢視）
 ├── example_project.json
 └── tests/
     ├── test_project.py  # 純邏輯
     ├── test_media.py    # 指令組裝（不執行 ffmpeg）
-    └── test_render.py   # 整合測試：用 lavfi 產生合成片段；沒有 ffmpeg 時略過
+    ├── test_render.py   # 整合測試：用 lavfi 產生合成片段；沒有 ffmpeg 時略過
+    └── test_contract.py # 實際輸出必須符合 openapi.yaml；沒有 PyYAML 時略過
 ```
 
 各單元的職責：
@@ -309,6 +312,12 @@ python -m unittest discover -s highlight_editor/tests -t .
 - 用 mock 模擬找不到 ffmpeg：回傳 `ffmpeg_not_found`，CLI exit code 為 2。
 - CLI：`list`、`validate`、`render` 的 stdout 是可解析的 JSON，exit code 正確，`render` 的 stderr 每行都是 JSON；從 stdin 讀取專案（`-`）也可以。
 
+**合約（`test_contract.py`；無法 import `yaml` 時 `skipTest`）**
+
+- `openapi.yaml` 的每個 `$ref` 都能解析，每個 `example` 都符合自己的 schema。
+- 整合測試實際產生的 `list`、`validate`、`render` 輸出、錯誤結果與進度事件，都必須符合 `openapi.yaml` 中對應的 schema（`ListClipsResponse`、`ValidateResponse`、`RenderResponse`、`ProgressEvent`）。驗證器是測試內附的簡易版，只涵蓋 `openapi.yaml` 用到的規則（type、nullable、enum、required、properties、items、oneOf、minimum/maximum、multipleOf、pattern、minLength、minItems），不新增依賴。
+- 目的：程式改了輸出格式卻忘記更新 `openapi.yaml` 時，測試會失敗。
+
 這些測試不需要 LFS 影片或網路。
 
 ## 8. 已知限制
@@ -322,4 +331,5 @@ python -m unittest discover -s highlight_editor/tests -t .
 1. §7 的所有測試在這台機器上（ffmpeg 8.0.1）通過。
 2. 用合成片段跑 `render`，產生的 mp4 可以播放，影格數與 JSON 回報一致。
 3. `git diff main --stat` 只包含 `highlight_editor/` 與這份 spec，不動到任何既有檔案。
-4. `highlight_editor/README.md` 讓 UI 同事不讀程式碼就能串接：契約、三個指令、錯誤代碼、範例。
+4. `highlight_editor/README.md` 讓 UI 同事不讀程式碼就能串接：契約、三個指令、錯誤代碼、範例，並指向 `openapi.yaml`。
+5. `highlight_editor/openapi.yaml` 與 §5 一致，並通過 `test_contract.py`。
