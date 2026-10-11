@@ -3,9 +3,11 @@
 
 import argparse
 import csv
+import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -14,6 +16,16 @@ TIME_FIELDS: Tuple[str, ...] = (
     "audio_calibrated_video_seconds",
     "predicted_video_seconds",
 )
+
+X264_PRESETS: Tuple[str, ...] = (
+    "ultrafast", "superfast", "veryfast", "faster", "fast",
+    "medium", "slow", "slower", "veryslow",
+)
+
+
+def default_jobs() -> int:
+    # libx264 本身已用多執行緒，每 4 個邏輯核心配 1 個 ffmpeg 就足以吃滿 CPU
+    return max(1, min(8, (os.cpu_count() or 4) // 4))
 
 
 def parse_bool(value: str) -> bool:
@@ -71,36 +83,66 @@ def extract_clip(
     output_path: Path,
     start_seconds: float,
     duration_seconds: float,
+    preset: str,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    run_command([
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-ss",
-        f"{start_seconds:.3f}",
-        "-i",
-        str(video_path),
-        "-t",
-        f"{duration_seconds:.3f}",
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a:0?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "20",
-        "-c:a",
-        "aac",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ])
+    # 先寫到暫存檔，成功才改名；中斷或失敗時不會留下會被當成已完成而略過的殘缺短片
+    temp_path = output_path.with_name(f"{output_path.stem}.part{output_path.suffix}")
+    try:
+        run_command([
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{start_seconds:.3f}",
+            "-i",
+            str(video_path),
+            "-t",
+            f"{duration_seconds:.3f}",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            "20",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(temp_path),
+        ])
+        temp_path.replace(output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def extract_clips(
+    video_path: Path,
+    clips: Sequence[Tuple[Path, float, float]],
+    preset: str,
+    jobs: int,
+) -> None:
+    """平行擷取 (輸出路徑, 起點秒數, 長度秒數)；任一失敗即取消尚未開始的工作。"""
+    if not clips:
+        return
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        futures = [
+            executor.submit(extract_clip, video_path, path, start, duration, preset)
+            for path, start, duration in clips
+        ]
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,12 +164,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="允許覆寫已存在的短片",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=default_jobs(),
+        help="同時執行的 ffmpeg 數量；預設為邏輯核心數 / 4，介於 1 到 8（本機為 %(default)s）",
+    )
+    parser.add_argument(
+        "--preset",
+        choices=X264_PRESETS,
+        default="veryfast",
+        help="libx264 編碼速度；越快檔案越大（預設 veryfast）",
+    )
     return parser
 
 
 def make_clips(args: argparse.Namespace) -> int:
     if args.pre_seconds < 0 or args.post_seconds < 0:
         raise ValueError("--pre-seconds 和 --post-seconds 不可小於 0")
+    if args.jobs < 1:
+        raise ValueError("--jobs 至少為 1")
     if not args.video.is_file():
         raise FileNotFoundError(f"找不到影片：{args.video}")
     if not args.ground_truth.is_file():
@@ -142,8 +198,8 @@ def make_clips(args: argparse.Namespace) -> int:
         rows = list(csv.DictReader(source))
 
     manifest_rows: List[Dict[str, str]] = []
+    pending: List[Tuple[Path, float, float]] = []
     skipped = 0
-    created = 0
     for row_number, row in enumerate(rows, start=1):
         event_seconds, time_source = parse_seconds(row)
         if event_seconds is None:
@@ -168,8 +224,7 @@ def make_clips(args: argparse.Namespace) -> int:
         clip_path = output_dir / label / clip_name
 
         if not clip_path.exists() or args.overwrite:
-            extract_clip(args.video, clip_path, clip_start, clip_duration)
-            created += 1
+            pending.append((clip_path, clip_start, clip_duration))
 
         manifest_rows.append({
             "clip_path": str(clip_path),
@@ -189,6 +244,11 @@ def make_clips(args: argparse.Namespace) -> int:
             "official_highlight_title": row.get("official_highlight_title", ""),
             "official_highlight_url": row.get("official_highlight_url", ""),
         })
+
+    if pending:
+        print(f"擷取 {len(pending)} 個短片（--jobs {args.jobs}，--preset {args.preset}）...")
+    extract_clips(args.video, pending, args.preset, args.jobs)
+    created = len(pending)
 
     manifest_fields = list(manifest_rows[0].keys()) if manifest_rows else [
         "clip_path", "label", "game_pk", "source_video", "inning", "half", "event_type",
