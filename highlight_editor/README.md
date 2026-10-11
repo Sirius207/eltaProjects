@@ -142,7 +142,7 @@ result = render_project(project_dict, on_progress=lambda event: print(event))
 
 1. **驗證並探測**：每個片段用 ffprobe 取得 fps、影格數、尺寸、有無音軌。
 2. **逐段處理**：
-   - 先用 `trim` 依影格裁切並統一規格，只編碼視訊，再讀出實際影格數 n。
+   - 先用 `trim` 依影格裁切並統一規格，只編碼視訊，再讀出實際影格數 n。中間檔不使用 B-frame，避免很短的片段串接後影像時間戳錯亂。
    - 接著把音訊截成剛好 `n / fps` 秒；片段沒有音軌時補靜音。
    - 中間檔是 .mov（H.264＋PCM）。
 3. **串接**：用 concat demuxer 合併，視訊直接複製，音訊只編碼一次 AAC。

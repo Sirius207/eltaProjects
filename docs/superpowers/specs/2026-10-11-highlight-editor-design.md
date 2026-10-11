@@ -244,7 +244,7 @@ CLI 的 stdout 一律是 UTF-8、`ensure_ascii=False` 的單一 JSON 物件。Wi
      -vf trim=start_frame=S:end_frame=E,setpts=PTS-STARTPTS,
          scale=W:H:force_original_aspect_ratio=decrease,pad=W:H:(ow-iw)/2:(oh-ih)/2,
          setsar=1,fps=FPS,format=yuv420p
-     -c:v libx264 -crf CRF -preset PRESET seg_0001_v.mov
+     -c:v libx264 -crf CRF -preset PRESET -bf 0 seg_0001_v.mov
    ```
 
    **4b. 音訊與封裝**：視訊直接複製，音訊切成剛好 `D = n / 輸出fps` 秒。
@@ -261,6 +261,7 @@ CLI 的 stdout 一律是 UTF-8、`ensure_ascii=False` 的單一 JSON 物件。Wi
    說明：
    - `A0 = 視訊 start_time + S / 片段fps`，`A1 = 視訊 start_time + E / 片段fps`。`atrim` 依時間戳切，而第 S 格的時間戳是視訊起點加上 `S / fps`，所以要加上 `start_time`。
    - 視訊的 `trim` 依實際解碼的影格計數，所以張數精準。片段 fps 與輸出 fps 不同時，重新取樣後的張數無法事先準確預測，所以先編碼再讀 `n`。
+   - 中間檔使用 `-bf 0`（不用 B-frame）。實測只有 1–3 格的片段在 concat 串接後，影像時間戳會互相重疊，最終影像軌比音訊短（例如 63 格只有 2.033 秒）；關掉 B-frame 後時間戳單調，影像與音訊等長。
    - 音訊先用 `apad` 補長，再以輸出端 `-t D` 精準截斷。PCM 可以做到取樣點精準，所以每段的音訊與視訊長度完全一致，段與段之間不會累積偏移。單一指令配 `-shortest` 的做法實測無法精準截斷（音訊 2.000 秒對上視訊 1.969 秒），因此不採用。
    - 不用 `-ss` 輸入端快轉，而是從片段開頭解碼。片段只有約 20 秒，成本很低，換來的是影格計數絕對準確。
    - `seg_{i:04d}_v.mov` 用完即刪。

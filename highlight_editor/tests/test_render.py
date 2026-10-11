@@ -246,6 +246,18 @@ class RenderProjectTests(unittest.TestCase):
             (result["segments"][0]["output_start_frame"], result["segments"][0]["output_end_frame"]), (0, 30),
         )
 
+    def test_very_short_segments_keep_video_timing(self):
+        result, _, out = self.render(
+            {"clip": "clips/a.mp4", "start_frame": 0, "end_frame": 1},
+            {"clip": "clips/a.mp4", "start_frame": 10, "end_frame": 12},
+            {"clip": "clips/a.mp4", "start_frame": 20, "end_frame": 23},
+            {"clip": "clips/a.mp4", "start_frame": 30, "end_frame": 60},
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(frame_count(out), 36)
+        self.assertAlmostEqual(stream_duration(out, "v:0"), 36 * ONE_FRAME_2997, delta=0.002)
+        self.assert_av_aligned(out)
+
     def test_segment_audio_matches_video_length(self):
         captured = {}
         real_run_tool = media.run_tool

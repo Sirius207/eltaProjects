@@ -142,7 +142,11 @@ def build_video_command(
     preset: str,
     output: str,
 ) -> List[str]:
-    """第一次呼叫：只編碼視訊。trim 依解碼的影格計數，所以張數精準。"""
+    """第一次呼叫：只編碼視訊。trim 依解碼的影格計數，所以張數精準。
+
+    -bf 0：中間檔不用 B-frame。有 B-frame 時，只有幾格的片段在 concat 串接（視訊直接複製）後
+    時間戳會互相重疊，最終影片的影像軌會比音訊短。
+    """
     video_filter = ",".join([
         f"trim=start_frame={start_frame}:end_frame={end_frame}",
         "setpts=PTS-STARTPTS",
@@ -154,7 +158,7 @@ def build_video_command(
     ])
     return [
         FFMPEG, *QUIET, "-i", clip, "-map", "0:v:0", "-an", "-vf", video_filter,
-        "-c:v", "libx264", "-crf", str(crf), "-preset", preset, output,
+        "-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-bf", "0", output,
     ]
 
 

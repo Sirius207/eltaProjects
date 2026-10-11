@@ -54,7 +54,7 @@ class CommandBuilderTests(unittest.TestCase):
             "trim=start_frame=45:end_frame=135,setpts=PTS-STARTPTS,"
             "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
             "setsar=1,fps=30000/1001,format=yuv420p",
-            "-c:v", "libx264", "-crf", "20", "-preset", "fast", "seg_0001_v.mov",
+            "-c:v", "libx264", "-crf", "20", "-preset", "fast", "-bf", "0", "seg_0001_v.mov",
         ])
 
     def test_audio_mux_command_with_audio(self):
