@@ -465,9 +465,29 @@
   // Ask highlight_editor for each clip's real fps and frame count so trims convert exactly.
   async function enrichClips(job) {
     if (!job || job.demo || !job.outputs.manifest) return;
+    let res;
     try {
-      const res = await api("POST", "/edit/clips", { manifests: [job.outputs.manifest] });
+      res = await api("POST", "/edit/clips", { manifests: [job.outputs.manifest] });
+    } catch (e) {
+      if (e.status === 404) res = { clips: [] };  // manifest moved or deleted: every clip is gone
+      else return;  // keep the estimate; export validation will catch problems
+    }
+    try {
       const byPath = new Map(res.clips.map((c) => [c.clip, c]));
+      // Clips that were moved or deleted since the run can't be played or exported; drop them.
+      const missing = R.clips.filter((c) => !(byPath.get(c.path) || {}).exists);
+      if (missing.length) {
+        R.clips = R.clips.filter((c) => !missing.includes(c));
+        R.sel = 0;
+        if (!R.clips.length) {
+          S.lastJobId = null; R.job = null; R.phase = R.preview ? "ready" : "setup";
+          persist();
+          toast(t("The clips from your last run are no longer on disk, so that run was cleared.", "上次執行的片段檔已不在磁碟上，已清除那次的結果。"));
+          renderAll();
+          return;
+        }
+        toast(t(`${clipsN(missing.length)} from your last run are no longer on disk and were removed from the list.`, `上次執行有 ${clipsN(missing.length)}已不在磁碟上，已從清單移除。`));
+      }
       R.clips.forEach((c) => {
         const info = byPath.get(c.path);
         if (!info || !info.exists) return;
@@ -762,6 +782,13 @@
       else generate();
     }
     else if (b.id === "stopBtn") stop();
+    else if (b.id === "resetPage") {
+      // Clears saved choices and the last run (this browser only). Keeps the language. Deletes no files.
+      try { localStorage.removeItem(STORE); } catch (err) { /* storage blocked */ }
+      if (R.es) R.es.close();
+      if (X.es) X.es.close();
+      location.reload();
+    }
     else if (b.closest("#cmdsToggle")) { S.showCmds = !S.showCmds; persist(); renderCommands(); }
     else if (b.id === "copyProject") copyText(JSON.stringify(X.lastProject || buildProject(), null, 2));
     else if (b.id === "exportCancel") cancelRender();
