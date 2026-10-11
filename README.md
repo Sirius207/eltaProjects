@@ -167,6 +167,16 @@ python sport_hightlight/make_clip.py \
 
 每個事件短片是獨立的 ffmpeg 工作，會平行擷取：`--jobs` 控制同時執行的數量（預設為邏輯核心數 / 4，介於 1 到 8），`--preset` 是 libx264 編碼速度（預設 `veryfast`）。libx264 本身已用多執行緒，所以 `--jobs` 開太大不會再變快；`--preset` 越快、檔案越大。在 32 執行緒 CPU（i9-13980HX）上從 1080p 整場影片切 72 段，預設值（`--jobs 8 --preset veryfast`）約 4~5 分鐘，舊設定（`--jobs 1 --preset fast`）約 8~9 分鐘；兩次冷啟動測試分別快 1.98 倍與 1.77 倍（筆電 CPU 滿載會降頻，數字會浮動）；manifest 相同、每段 frame 數相同，總大小從 1.38 GB 降到 1.18 GB。解析度越低，平行的效果越明顯（540p 片段約快 2.8 倍）。短片先寫成 `*.part.mp4`，完成才改名，中斷時不會留下會被略過的殘缺檔。
 
+有 NVIDIA 顯卡或 Intel 內顯時，可用 `--encoder` 改用硬體編碼；品質設定已調到檔案大小、畫質與 libx264 `veryfast` 相近。以下為 i9-13980HX + RTX 4070 Laptop 的實測，SSIM 為抽 4 段與原始影片比較：
+
+| `--encoder` | 需要的硬體 | 速度（相對 libx264 `veryfast`） | SSIM | 說明 |
+| --- | --- | --- | --- | --- |
+| `libx264`（預設） | 任何 CPU | 1× | 0.9791 | 不同電腦輸出一致，最容易重現 |
+| `nvenc` | NVIDIA 顯卡 | 約 2.5×（整場冷啟動 294 → 117 秒） | 0.9773 | `-cq 26`，整場總大小 1.17 GB |
+| `qsv` | Intel 內顯 | 約 1.5×（24 段）；整場約 122 秒 | 0.9771 | `-global_quality 22`，整場總大小 1.24 GB，CPU 使用率約 40% |
+
+解碼一律使用 CPU：Intel 硬體解碼（`-hwaccel qsv`）會讓片段固定提早 4 格，NVIDIA／Intel 硬體解碼搭配 libx264 也沒有比較快。`--preset` 只對 libx264 有效。指定的硬體編碼器無法使用時，程式會先試編 1 格並直接報錯。硬體編碼的輸出可能因顯卡或驅動版本略有差異。Apple M 系列的 VideoToolbox 尚未支援，需要先在 Mac 上校正品質設定。
+
 整場資料集（指令見「完整轉播模式」）：72 個 20 秒短片，約 1.2 GB（`--preset fast` 時約 1.4 GB），片段之間沒有重疊；依目前配對規則，`positive` 為 16 個、`hard_negative` 為 56 個。`manifest.csv` 除了標籤與時間，還記錄 `game_pk` 與 `source_video`，合併多場比賽時可追溯來源。已存在的短片預設不重新編碼，需要重切請加 `--overwrite`。
 
 ### 篩選事件
